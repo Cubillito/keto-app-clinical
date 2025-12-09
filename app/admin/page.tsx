@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../lib/supabaseClient'
-import { Search, Save, Trash2, Edit2, X, ArrowLeft, Users, Database, UserPlus, Lock, ShieldAlert } from 'lucide-react'
+// 👇 AQUÍ FALTABA EL 'Plus'
+import { Search, Save, Trash2, Edit2, X, ArrowLeft, Users, Database, UserPlus, Lock, ShieldAlert, Plus } from 'lucide-react'
 
 export default function AdminPanel() {
   const router = useRouter()
@@ -37,13 +38,12 @@ export default function AdminPanel() {
     
     const { data: perfil } = await supabase.from('perfiles').select('rol').eq('id', user.id).single()
     
-    // GUARDIA DE SEGURIDAD MODIFICADO 🛡️
-    // Ahora dejamos pasar a 'admin' Y a 'nutri'
+    // GUARDIA DE SEGURIDAD
     if (perfil?.rol !== 'admin' && perfil?.rol !== 'nutri') {
       alert("Acceso Restringido")
       router.push('/')
     } else {
-      setMiRol(perfil.rol) // Guardamos quién es para ocultar pestañas después
+      setMiRol(perfil.rol)
     }
   }
 
@@ -74,7 +74,7 @@ export default function AdminPanel() {
 
   // --- LOGICA NUTRICIONISTAS (SOLO ADMIN) ---
   const cargarNutris = async () => {
-    if (miRol !== 'admin') return // Doble chequeo de seguridad
+    if (miRol !== 'admin') return 
     const { data } = await supabase.from('perfiles').select('*').in('rol', ['nutri', 'admin'])
     setNutris(data || [])
   }
@@ -124,7 +124,7 @@ export default function AdminPanel() {
           </div>
         </div>
         
-        {/* SWITCHER DE PESTAÑAS (INTELIGENTE) */}
+        {/* SWITCHER DE PESTAÑAS */}
         <div className="flex bg-slate-800 p-1 rounded-lg">
           <button 
             onClick={() => setVista('alimentos')}
@@ -133,7 +133,6 @@ export default function AdminPanel() {
             <Database className="w-4 h-4"/> Alimentos
           </button>
           
-          {/* SOLO MOSTRAMOS ESTA PESTAÑA SI ES ADMIN */}
           {miRol === 'admin' && (
             <button 
               onClick={() => setVista('nutris')}
@@ -145,7 +144,7 @@ export default function AdminPanel() {
         </div>
       </div>
 
-      {/* VISTA ALIMENTOS (Visible para todos los Staff) */}
+      {/* VISTA ALIMENTOS */}
       {vista === 'alimentos' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in">
           <div className="lg:col-span-2 space-y-4">
