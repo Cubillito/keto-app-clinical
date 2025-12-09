@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Lock, Mail, Loader2, AlertCircle, KeyRound } from 'lucide-react'
+import { Lock, Mail, Loader2, AlertCircle, KeyRound, Heart } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 export default function LoginPage() {
@@ -41,12 +41,11 @@ export default function LoginPage() {
         
         const rol = perfil?.rol || 'paciente'
         
-        // Redirección forzada para limpiar caché
+        // Redirección
         if (rol === 'nutri' || rol === 'admin') window.location.href = '/nutri'
         else window.location.href = '/'
       }
     } catch (err: any) {
-      // Mensaje amigable
       if (err.message.includes('Invalid login')) {
         setError('Correo o contraseña incorrectos.')
       } else {
@@ -57,7 +56,6 @@ export default function LoginPage() {
     }
   }
 
-  // Lógica de recuperación de clave
   const recuperarClave = async () => {
     if (!email) {
       setError("☝️ Escribe tu correo en la casilla de arriba primero.")
@@ -67,7 +65,7 @@ export default function LoginPage() {
     setError('')
     
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/perfil`, // Redirige a la pantalla de perfil para poner clave nueva
+      redirectTo: `${window.location.origin}/perfil`,
     })
 
     if (error) setError(error.message)
@@ -77,10 +75,11 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4 font-sans">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-4 font-sans">
+      
+      {/* TARJETA PRINCIPAL */}
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100 z-10">
         
-        {/* Header Azul */}
         <div className="bg-blue-600 p-8 text-center">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm mb-4">
             <Lock className="w-8 h-8 text-white" />
@@ -92,7 +91,6 @@ export default function LoginPage() {
         <div className="p-8">
           <form onSubmit={handleLogin} className="space-y-6">
             
-            {/* Input Correo */}
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-500 uppercase">Correo Electrónico</label>
               <div className="relative">
@@ -108,7 +106,6 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Input Clave */}
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-500 uppercase">Contraseña</label>
               <div className="relative">
@@ -122,8 +119,6 @@ export default function LoginPage() {
                   required
                 />
               </div>
-              
-              {/* Botón Recuperar Clave */}
               <div className="text-right mt-2">
                 <button 
                   type="button" 
@@ -135,7 +130,6 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Mensajes de Estado */}
             {error && (
               <div className="flex items-center gap-2 p-3 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg">
                 <AlertCircle className="w-4 h-4" /> {error}
@@ -148,7 +142,6 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Botón Ingresar */}
             <button
               type="submit"
               disabled={loading}
@@ -159,6 +152,17 @@ export default function LoginPage() {
           </form>
         </div>
       </div>
+
+      {/* FOOTER - TU MARCA */}
+      <div className="mt-8 text-center animate-in fade-in slide-in-from-bottom-4 duration-1000">
+        <p className="text-slate-400 text-xs font-medium tracking-wide">
+          Hecho con <Heart className="w-3 h-3 text-red-400 inline mx-0.5 animate-pulse"/> por
+        </p>
+        <p className="text-slate-600 text-sm font-bold mt-1">
+          Ignacio Cubillos Leal
+        </p>
+      </div>
+
     </div>
   )
 }
