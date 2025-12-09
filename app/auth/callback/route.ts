@@ -5,11 +5,11 @@ import { NextResponse } from 'next/server'
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  // Si hay una dirección de destino (next), la usamos, si no, vamos al inicio '/'
   const next = searchParams.get('next') ?? '/'
 
   if (code) {
-    const cookieStore = cookies()
+    // CORRECCIÓN AQUÍ: Agregamos 'await' porque en Next.js nuevo esto es asíncrono
+    const cookieStore = await cookies()
 
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -29,15 +29,12 @@ export async function GET(request: Request) {
       }
     )
     
-    // Intercambiamos el código por la sesión real
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     
     if (!error) {
-      // Login exitoso: enviamos al usuario a la app
       return NextResponse.redirect(`${origin}${next}`)
     }
   }
 
-  // Si algo falla, lo devolvemos al login con un error
   return NextResponse.redirect(`${origin}/login?error=auth`)
 }
