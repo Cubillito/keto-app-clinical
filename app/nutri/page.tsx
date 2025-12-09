@@ -12,6 +12,9 @@ export default function NutriDashboard() {
   const [usuarioActual, setUsuarioActual] = useState<any>(null)
   const [esAdmin, setEsAdmin] = useState(false)
   
+  // Estado nuevo: ¿Puede editar la base de datos? (Admin o Nutri)
+  const [puedeEditarBase, setPuedeEditarBase] = useState(false)
+  
   // Modal Crear
   const [mostrarModal, setMostrarModal] = useState(false)
   const [creando, setCreando] = useState(false)
@@ -29,19 +32,26 @@ export default function NutriDashboard() {
       if (!user) { router.push('/login'); return }
       setUsuarioActual(user)
 
-      // 2. Verificar si es admin
+      // 2. Verificar rol para permisos
       const { data: perfil } = await supabase.from('perfiles').select('rol').eq('id', user.id).single()
-      const soyAdmin = perfil?.rol === 'admin'
+      
+      const rol = perfil?.rol
+      const soyAdmin = rol === 'admin'
+      
       if (soyAdmin) setEsAdmin(true)
+      
+      // NUEVO: Permitimos ver el botón si es Admin O Nutri
+      if (soyAdmin || rol === 'nutri') {
+        setPuedeEditarBase(true)
+      }
 
-      // 3. CARGAR PACIENTES (FILTRADO INTELIGENTE) 🧠
+      // 3. CARGAR PACIENTES
       let query = supabase.from('perfiles').select('*').eq('rol', 'paciente')
 
       if (!soyAdmin) {
         // Si NO soy admin, solo traigo los pacientes donde YO soy el nutricionista
         query = query.eq('nutricionista_id', user.id)
       }
-      // (Si soy admin, no aplico filtro y veo a todos)
 
       const { data, error } = await query
       if (error) throw error
@@ -66,7 +76,7 @@ export default function NutriDashboard() {
         body: JSON.stringify({ 
           ...nuevoPaciente, 
           rol: 'paciente',
-          creadorId: usuarioActual.id // <--- ENVIAMOS TU ID COMO EL "PADRE" DEL PACIENTE
+          creadorId: usuarioActual.id 
         })
       })
 
@@ -76,7 +86,7 @@ export default function NutriDashboard() {
       alert('¡Paciente asignado a tu lista!')
       setMostrarModal(false)
       setNuevoPaciente({ nombre: '', email: '', password: '' })
-      cargarDatos() // Recargar lista para ver al nuevo
+      cargarDatos()
 
     } catch (error: any) {
       alert(error.message)
@@ -85,7 +95,6 @@ export default function NutriDashboard() {
     }
   }
 
-  // ... (El resto del renderizado es visualmente igual, aquí te lo dejo completo para copiar y pegar)
   const cerrarSesion = async () => { await supabase.auth.signOut(); router.push('/login') }
 
   return (
@@ -99,11 +108,14 @@ export default function NutriDashboard() {
           </div>
         </div>
         <div className="flex gap-3">
-          {esAdmin && (
+          
+          {/* BOTÓN NEGRO PARA BASE DE DATOS (Visible para Nutri y Admin) */}
+          {puedeEditarBase && (
             <button onClick={() => router.push('/admin')} className="bg-slate-800 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-bold hover:bg-slate-900 transition shadow-md border border-slate-700">
-              <Database className="w-4 h-4" /> Admin
+              <Database className="w-4 h-4" /> Base Alimentos
             </button>
           )}
+
           <button onClick={cerrarSesion} className="text-sm text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg flex items-center gap-2 transition border border-transparent hover:border-red-100">
             <LogOut className="w-4 h-4" /> Salir
           </button>
@@ -134,7 +146,7 @@ export default function NutriDashboard() {
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-50 to-blue-100 text-blue-600 flex items-center justify-center font-bold text-lg border border-blue-200">
                     {paciente.nombre_completo?.charAt(0).toUpperCase() || 'P'}
                   </div>
-                  {/* Etiqueta para saber si es propio o de otro (solo visible para admin) */}
+                  {/* Etiqueta */}
                   {esAdmin && paciente.nutricionista_id !== usuarioActual.id ? (
                      <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-1 rounded-full">Global</span>
                   ) : (
@@ -150,6 +162,7 @@ export default function NutriDashboard() {
         )}
       </main>
 
+      {/* MODAL CREAR PACIENTE (Sin cambios) */}
       {mostrarModal && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95">

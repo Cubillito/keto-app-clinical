@@ -6,42 +6,25 @@ export async function POST(request: Request) {
     const body = await request.json()
     const { email, password, nombre, rol, creadorId } = body
 
-    // Validar datos básicos
     if (!email || !password || !nombre || !rol) {
       return NextResponse.json({ error: "Faltan datos" }, { status: 400 })
     }
 
-    // --- SEGURIDAD DE ROLES ---
-    // Aquí podríamos validar que si intentas crear un 'nutri', el creador sea 'admin'.
-    // Por simplicidad confiamos en que el frontend manda los datos correctos por ahora.
-
-    // 1. Conectamos con la LLAVE MAESTRA (Service Role)
     const supabaseAdmin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      {
-        auth: {
-          autoRefreshToken: false,
-          persistSession: false
-        }
-      }
+      { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
-    // 2. Crear el usuario en Auth (Esto permite el Login con Email/Pass)
-    // NOTA: Al poner email_confirm: true, permitimos que si luego entra con Google, se fusionen.
+    // 1. Crear Usuario Auth
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: email,
-      password: password,
-      email_confirm: true, 
-      user_metadata: { nombre_completo: nombre }
+      email, password, email_confirm: true, user_metadata: { nombre_completo: nombre }
     })
 
-    if (authError) {
-      return NextResponse.json({ error: authError.message }, { status: 400 })
-    }
+    if (authError) return NextResponse.json({ error: authError.message }, { status: 400 })
 
     if (authData.user) {
-      // 3. Crear su ficha en 'perfiles' con el ROL y el DUEÑO
+      // 2. Crear Perfil
       const { error: profileError } = await supabaseAdmin
         .from('perfiles')
         .insert({
@@ -49,17 +32,34 @@ export async function POST(request: Request) {
           email: email,
           nombre_completo: nombre,
           rol: rol,
-          nutricionista_id: creadorId // <--- ESTA ES LA LÍNEA NUEVA IMPORTANTE
+          nutricionista_id: creadorId
         })
       
       if (profileError) {
-        // Si falla el perfil, borramos el usuario auth para no dejar datos basura
         await supabaseAdmin.auth.admin.deleteUser(authData.user.id)
-        return NextResponse.json({ error: "Error creando perfil: " + profileError.message }, { status: 400 })
+        return NextResponse.json({ error: "Error perfil: " + profileError.message }, { status: 400 })
       }
+
+      // --- 3. NUEVO: SI ES PACIENTE, DARLE ACCESO A TODOS LOS ALIMENTOS ---
+      if (rol === 'paciente') {
+        // A. Traer todos los IDs de alimentos globales
+        const { data: allFoods } = await supabaseAdmin.from('alimentos').select('id')
+        
+        if (allFoods && allFoods.length > 0) {
+          // B. Preparar la inserción masiva
+          const permisos = allFoods.map(food => ({
+            paciente_id: authData.user.id,
+            alimento_id: food.id
+          }))
+
+          // C. Insertar
+          await supabaseAdmin.from('alimentos_permitidos').insert(permisos)
+        }
+      }
+      // ------------------------------------------------------------------
     }
 
-    return NextResponse.json({ message: 'Usuario creado exitosamente' })
+    return NextResponse.json({ message: 'Usuario creado y alimentos asignados' })
 
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 })
