@@ -147,7 +147,7 @@ export default function LoginPage() {
               disabled={loading}
               className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl transition-all flex justify-center items-center gap-2 shadow-lg shadow-slate-200"
             >
-              {loading ? <Loader2 className="animate-spin" /> : 'Ingresar al Sistema'}
+              {loading ? <Loader2 className="animate-spin" /> : 'Ingresar'}
             </button>
           </form>
         </div>
