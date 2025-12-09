@@ -2,8 +2,7 @@
 
 import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Lock, Mail, Loader2, AlertCircle } from 'lucide-react'
-// --- CAMBIO IMPORTANTE: Usamos la librería moderna para Auth ---
+import { Lock, Mail, Loader2, AlertCircle, KeyRound } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 export default function LoginPage() {
@@ -14,7 +13,7 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [mensajeRecuperacion, setMensajeRecuperacion] = useState('')
 
-  // 1. Creamos el cliente AQUÍ MISMO para asegurar que use cookies modernas
+  // Cliente Supabase
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -33,7 +32,7 @@ export default function LoginPage() {
       if (authError) throw authError
 
       if (data.user) {
-        // Consultar rol
+        // Consultar rol para redirigir
         const { data: perfil } = await supabase
           .from('perfiles')
           .select('rol')
@@ -42,42 +41,33 @@ export default function LoginPage() {
         
         const rol = perfil?.rol || 'paciente'
         
-        // Forzamos recarga para que el servidor reconozca la cookie nueva
+        // Redirección forzada para limpiar caché
         if (rol === 'nutri' || rol === 'admin') window.location.href = '/nutri'
         else window.location.href = '/'
       }
     } catch (err: any) {
-      setError('Credenciales incorrectas o error de conexión.')
+      // Mensaje amigable
+      if (err.message.includes('Invalid login')) {
+        setError('Correo o contraseña incorrectos.')
+      } else {
+        setError(err.message)
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  const loginConGoogle = async () => {
-    setLoading(true) // Feedback visual
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        // Esto es vital: Le dice a dónde volver exactamente
-        redirectTo: `${window.location.origin}/auth/callback`,
-        queryParams: {
-          access_type: 'offline',
-          prompt: 'consent',
-        },
-      },
-    })
-  }
-
+  // Lógica de recuperación de clave
   const recuperarClave = async () => {
     if (!email) {
-      setError("Por favor, escribe tu correo en la casilla de arriba primero.")
+      setError("☝️ Escribe tu correo en la casilla de arriba primero.")
       return
     }
     setLoading(true)
     setError('')
     
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/perfil`,
+      redirectTo: `${window.location.origin}/perfil`, // Redirige a la pantalla de perfil para poner clave nueva
     })
 
     if (error) setError(error.message)
@@ -90,47 +80,35 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4 font-sans">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100">
         
+        {/* Header Azul */}
         <div className="bg-blue-600 p-8 text-center">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm mb-4">
             <Lock className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Acceso Médico</h1>
-          <p className="text-blue-100 mt-2 text-sm">Gestión de Dieta Cetogénica</p>
+          <h1 className="text-2xl font-bold text-white">Acceso Privado</h1>
+          <p className="text-blue-100 mt-2 text-sm">Plataforma de Gestión Keto</p>
         </div>
 
         <div className="p-8">
-          {/* BOTÓN GOOGLE */}
-          <button
-            type="button"
-            onClick={loginConGoogle}
-            className="w-full bg-white border border-slate-300 text-slate-700 font-bold py-3 rounded-xl hover:bg-slate-50 flex justify-center items-center gap-3 transition-all mb-6"
-          >
-            <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-5 h-5" alt="Google" />
-            Ingresar con Google
-          </button>
-
-          <div className="relative flex py-2 items-center mb-6">
-            <div className="flex-grow border-t border-slate-200"></div>
-            <span className="flex-shrink mx-4 text-slate-400 text-xs uppercase">O usa tu correo</span>
-            <div className="flex-grow border-t border-slate-200"></div>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-5">
+          <form onSubmit={handleLogin} className="space-y-6">
+            
+            {/* Input Correo */}
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-500 uppercase">Correo</label>
+              <label className="text-xs font-bold text-slate-500 uppercase">Correo Electrónico</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-200 focus:border-blue-500 outline-none"
-                  placeholder="paciente@gmail.com"
+                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-200 focus:border-blue-500 outline-none transition-all"
+                  placeholder="usuario@ejemplo.com"
                   required
                 />
               </div>
             </div>
 
+            {/* Input Clave */}
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-500 uppercase">Contraseña</label>
               <div className="relative">
@@ -139,17 +117,25 @@ export default function LoginPage() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-200 focus:border-blue-500 outline-none"
+                  className="w-full pl-10 pr-4 py-3 rounded-lg border border-slate-200 focus:border-blue-500 outline-none transition-all"
                   placeholder="••••••••"
+                  required
                 />
               </div>
-              <div className="text-right">
-                <button type="button" onClick={recuperarClave} className="text-xs text-blue-600 hover:underline">
-                  ¿Olvidaste tu clave?
+              
+              {/* Botón Recuperar Clave */}
+              <div className="text-right mt-2">
+                <button 
+                  type="button" 
+                  onClick={recuperarClave} 
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center justify-end gap-1 ml-auto"
+                >
+                  <KeyRound className="w-3 h-3" /> ¿Olvidaste tu contraseña?
                 </button>
               </div>
             </div>
 
+            {/* Mensajes de Estado */}
             {error && (
               <div className="flex items-center gap-2 p-3 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg">
                 <AlertCircle className="w-4 h-4" /> {error}
@@ -162,12 +148,13 @@ export default function LoginPage() {
               </div>
             )}
 
+            {/* Botón Ingresar */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl transition-all flex justify-center items-center gap-2"
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-xl transition-all flex justify-center items-center gap-2 shadow-lg shadow-slate-200"
             >
-              {loading ? <Loader2 className="animate-spin" /> : 'Ingresar'}
+              {loading ? <Loader2 className="animate-spin" /> : 'Ingresar al Sistema'}
             </button>
           </form>
         </div>
