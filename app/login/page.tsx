@@ -3,7 +3,8 @@
 import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Lock, Mail, Loader2, AlertCircle } from 'lucide-react'
-import { supabase } from '../lib/supabaseClient'
+// --- CAMBIO IMPORTANTE: Usamos la librería moderna para Auth ---
+import { createBrowserClient } from '@supabase/ssr'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -13,7 +14,12 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [mensajeRecuperacion, setMensajeRecuperacion] = useState('')
 
-  // --- 1. LOGIN CON EMAIL Y CLAVE ---
+  // 1. Creamos el cliente AQUÍ MISMO para asegurar que use cookies modernas
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -27,7 +33,7 @@ export default function LoginPage() {
       if (authError) throw authError
 
       if (data.user) {
-        // Verificar Rol
+        // Consultar rol
         const { data: perfil } = await supabase
           .from('perfiles')
           .select('rol')
@@ -35,8 +41,10 @@ export default function LoginPage() {
           .single()
         
         const rol = perfil?.rol || 'paciente'
-        if (rol === 'nutri' || rol === 'admin') router.push('/nutri')
-        else router.push('/')
+        
+        // Forzamos recarga para que el servidor reconozca la cookie nueva
+        if (rol === 'nutri' || rol === 'admin') window.location.href = '/nutri'
+        else window.location.href = '/'
       }
     } catch (err: any) {
       setError('Credenciales incorrectas o error de conexión.')
@@ -45,22 +53,21 @@ export default function LoginPage() {
     }
   }
 
-  // --- 2. LOGIN CON GOOGLE ---
   const loginConGoogle = async () => {
+    setLoading(true) // Feedback visual
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
+        // Esto es vital: Le dice a dónde volver exactamente
+        redirectTo: `${window.location.origin}/auth/callback`,
         queryParams: {
           access_type: 'offline',
           prompt: 'consent',
         },
-        // Redirige a la home después de loguearse
-        redirectTo: `${window.location.origin}/auth/callback`, 
       },
     })
   }
 
-  // --- 3. RECUPERAR CLAVE ---
   const recuperarClave = async () => {
     if (!email) {
       setError("Por favor, escribe tu correo en la casilla de arriba primero.")
@@ -69,9 +76,8 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
     
-    // Esto envía un email mágico que permite al usuario entrar y cambiar su clave
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/perfil`, // Lo mandamos directo a cambiar la clave
+      redirectTo: `${window.location.origin}/perfil`,
     })
 
     if (error) setError(error.message)
