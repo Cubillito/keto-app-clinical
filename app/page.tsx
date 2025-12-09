@@ -38,22 +38,28 @@ export default function PatientDashboard() {
       if (!user) { router.push('/login'); return }
       setUsuario(user)
 
-      // 1. Catálogo (Con filtro de permisos)
-      if (catalogo.length === 0) {
-        const { data: dataPermitidos } = await supabase
-          .from('alimentos_permitidos')
-          .select('alimentos(*)')
-          .eq('paciente_id', user.id)
-        
-        const listaLimpia = dataPermitidos?.map((item: any) => item.alimentos) || []
-        setCatalogo(listaLimpia)
-      }
+      // 1. CARGAR CATÁLOGO (LÓGICA LISTA NEGRA) ⚫
+      // A. Traemos TODOS los alimentos del sistema
+      const { data: todosAlimentos } = await supabase.from('alimentos').select('*')
+      
+      // B. Traemos los IDs PROHIBIDOS para este paciente
+      const { data: prohibidos } = await supabase
+        .from('alimentos_prohibidos')
+        .select('alimento_id')
+        .eq('paciente_id', user.id)
+      
+      // C. Filtramos: Catálogo = Todos - Prohibidos
+      // Creamos un Set de IDs prohibidos para búsqueda rápida
+      const idsProhibidos = new Set(prohibidos?.map(p => p.alimento_id))
+      const catalogoFiltrado = todosAlimentos?.filter(a => !idsProhibidos.has(a.id)) || []
+      
+      setCatalogo(catalogoFiltrado)
 
-      // 2. Bloques
+      // 2. Bloques (Igual que antes)
       const { data: dataBloques } = await supabase.from('metas_por_comida').select('*').eq('paciente_id', user.id).order('id', { ascending: true })
       setBloques(dataBloques || [])
 
-      // 3. Diario
+      // 3. Diario (Igual que antes)
       const { data: dataDiario } = await supabase
         .from('diario_comidas')
         .select('*, alimentos(*)')

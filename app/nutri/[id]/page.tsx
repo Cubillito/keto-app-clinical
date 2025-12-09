@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabaseClient'
-import { Save, Plus, Trash2, ArrowLeft, Search, Check, Ban, Calendar, Eye, Edit3, AlertCircle, CheckCircle } from 'lucide-react'
+import { Save, Plus, Trash2, ArrowLeft, Search, Ban, Calendar, Eye, Edit3, AlertCircle, CheckCircle, Unlock } from 'lucide-react'
 
 export default function GestionPaciente() {
   const { id } = useParams()
@@ -11,20 +11,22 @@ export default function GestionPaciente() {
   const [paciente, setPaciente] = useState<any>(null)
   const [activeTab, setActiveTab] = useState<'plan' | 'diario'>('plan')
   
-  // --- DATOS COMUNES ---
+  // --- DATOS ---
   const [bloques, setBloques] = useState<any[]>([])
-
+  
   // --- ESTADOS TAB PLANIFICACIÓN ---
-  const [permitidos, setPermitidos] = useState<any[]>([])
+  // Ahora "prohibidos" guarda lo que NO pueden comer
+  const [prohibidos, setProhibidos] = useState<any[]>([])
   const [busquedaGlobal, setBusquedaGlobal] = useState('')
   const [resultadosGlobales, setResultadosGlobales] = useState<any[]>([])
+  
   const [nuevoBloque, setNuevoBloque] = useState('')
   const [metaProt, setMetaProt] = useState('')
   const [metaGrasa, setMetaGrasa] = useState('')
   const [metaCarbo, setMetaCarbo] = useState('')
   const [ratio, setRatio] = useState('')
 
-  // --- ESTADOS TAB DIARIO (AUDITORÍA) ---
+  // --- ESTADOS TAB DIARIO ---
   const [fechaAudit, setFechaAudit] = useState(new Date().toLocaleDateString('en-CA'))
   const [diarioAudit, setDiarioAudit] = useState<any[]>([])
   const [loadingDiario, setLoadingDiario] = useState(false)
@@ -38,37 +40,33 @@ export default function GestionPaciente() {
   }, [activeTab, fechaAudit])
 
   const cargarDatosGenerales = async () => {
-    // 1. Paciente
     const { data: userData } = await supabase.from('perfiles').select('*').eq('id', id).single()
     setPaciente(userData)
 
-    // 2. Metas (Bloques)
     const { data: metasData } = await supabase.from('metas_por_comida').select('*').eq('paciente_id', id).order('id', { ascending: true })
     setBloques(metasData || [])
 
-    // 3. Alimentos Permitidos
-    const { data: alimentosData } = await supabase
-      .from('alimentos_permitidos')
+    // Cargar LISTA NEGRA
+    const { data: prohibidosData } = await supabase
+      .from('alimentos_prohibidos')
       .select('id, alimento_id, alimentos(*)')
       .eq('paciente_id', id)
     
-    const listaLimpia = alimentosData?.map((item: any) => ({ permiso_id: item.id, ...item.alimentos }))
-    setPermitidos(listaLimpia || [])
+    const listaLimpia = prohibidosData?.map((item: any) => ({ 
+      bloqueo_id: item.id, // ID del bloqueo
+      ...item.alimentos 
+    }))
+    setProhibidos(listaLimpia || [])
   }
 
   const cargarDiario = async () => {
     setLoadingDiario(true)
-    const { data } = await supabase
-      .from('diario_comidas')
-      .select('*, alimentos(*)')
-      .eq('paciente_id', id)
-      .eq('fecha', fechaAudit)
-    
+    const { data } = await supabase.from('diario_comidas').select('*, alimentos(*)').eq('paciente_id', id).eq('fecha', fechaAudit)
     setDiarioAudit(data || [])
     setLoadingDiario(false)
   }
 
-  // --- LOGICA PLANIFICACION (Igual que antes) ---
+  // --- LOGICA BLOQUES ---
   const agregarBloque = async () => {
     if (!nuevoBloque) return alert("Falta nombre")
     await supabase.from('metas_por_comida').insert({
@@ -86,6 +84,7 @@ export default function GestionPaciente() {
     cargarDatosGenerales()
   }
 
+  // --- LOGICA LISTA NEGRA (PROHIBIDOS) ---
   const buscarEnGlobal = async (txt: string) => {
     setBusquedaGlobal(txt)
     if (txt.length < 3) { setResultadosGlobales([]); return }
@@ -93,25 +92,34 @@ export default function GestionPaciente() {
     setResultadosGlobales(data || [])
   }
 
-  const autorizarAlimento = async (alimento: any) => {
-    const yaExiste = permitidos.find(p => p.id === alimento.id)
-    if (yaExiste) return alert("Ya tiene este alimento.")
-    await supabase.from('alimentos_permitidos').insert({ paciente_id: id, alimento_id: alimento.id })
-    cargarDatosGenerales(); setBusquedaGlobal(''); setResultadosGlobales([])
+  const prohibirAlimento = async (alimento: any) => {
+    // Verificar si ya está prohibido
+    const yaBloqueado = prohibidos.find(p => p.id === alimento.id)
+    if (yaBloqueado) return alert("Este alimento ya está restringido.")
+
+    const { error } = await supabase.from('alimentos_prohibidos').insert({
+      paciente_id: id,
+      alimento_id: alimento.id
+    })
+
+    if (error) alert("Error: " + error.message)
+    else {
+      cargarDatosGenerales()
+      setBusquedaGlobal('')
+      setResultadosGlobales([])
+    }
   }
 
-  const prohibirAlimento = async (permisoId: number) => {
-    await supabase.from('alimentos_permitidos').delete().eq('id', permisoId)
+  const desbloquearAlimento = async (bloqueoId: number) => {
+    await supabase.from('alimentos_prohibidos').delete().eq('id', bloqueoId)
     cargarDatosGenerales()
   }
 
-  // --- RENDERIZADO DEL DIARIO (AUDITORÍA) ---
+  // --- RENDERIZADO DIARIO ---
   const renderBloqueAuditoria = (bloque: any) => {
     const comidas = diarioAudit.filter(d => d.bloque_id === bloque.id)
-    
     const sumaP = comidas.reduce((acc, el) => acc + ((el.alimentos.proteina * el.gramos_consumidos)/100), 0)
     const sumaG = comidas.reduce((acc, el) => acc + ((el.alimentos.grasa * el.gramos_consumidos)/100), 0)
-    
     const cumplido = Math.abs(sumaP - bloque.meta_proteina) < 2
 
     return (
@@ -120,12 +128,10 @@ export default function GestionPaciente() {
           <h4 className="font-bold text-slate-800">{bloque.nombre_bloque}</h4>
           {cumplido ? <CheckCircle className="w-5 h-5 text-green-600"/> : <AlertCircle className="w-5 h-5 text-red-500"/>}
         </div>
-        
         <div className="flex gap-4 text-xs font-mono text-slate-600 mb-3 bg-white/50 p-2 rounded">
            <span>PROT: <b>{sumaP.toFixed(1)}</b> / {bloque.meta_proteina}</span>
            <span>GRASA: <b>{sumaG.toFixed(1)}</b> / {bloque.meta_grasa}</span>
         </div>
-
         {comidas.length === 0 ? <p className="text-xs text-slate-400 italic">No registró nada.</p> : (
           <ul className="space-y-1">
             {comidas.map((c: any) => (
@@ -147,37 +153,23 @@ export default function GestionPaciente() {
         {/* HEADER */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
-            <button onClick={() => router.push('/nutri')} className="p-2 bg-white border rounded-lg hover:bg-slate-100 text-slate-500">
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+            <button onClick={() => router.push('/nutri')} className="p-2 bg-white border rounded-lg hover:bg-slate-100 text-slate-500"><ArrowLeft className="w-5 h-5" /></button>
             <div>
               <h1 className="text-2xl font-bold text-slate-800">{paciente?.nombre_completo}</h1>
               <p className="text-sm text-slate-500">{paciente?.email}</p>
             </div>
           </div>
-
-          {/* TABS SWITCHER */}
           <div className="bg-white p-1 rounded-xl border border-slate-200 flex shadow-sm">
-            <button 
-              onClick={() => setActiveTab('plan')}
-              className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition ${activeTab === 'plan' ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
-            >
-              <Edit3 className="w-4 h-4"/> Planificación
-            </button>
-            <button 
-              onClick={() => setActiveTab('diario')}
-              className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition ${activeTab === 'diario' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}
-            >
-              <Eye className="w-4 h-4"/> Auditoría Diario
-            </button>
+            <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition ${activeTab === 'plan' ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}><Edit3 className="w-4 h-4"/> Planificación</button>
+            <button onClick={() => setActiveTab('diario')} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition ${activeTab === 'diario' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}><Eye className="w-4 h-4"/> Auditoría</button>
           </div>
         </div>
 
-        {/* --- PESTAÑA 1: PLANIFICACIÓN (LO QUE YA TENÍAS) --- */}
+        {/* --- TAB PLANIFICACIÓN --- */}
         {activeTab === 'plan' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in">
             
-            {/* IZQUIERDA: BLOQUES */}
+            {/* BLOQUES DE DIETA */}
             <div>
               <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100 mb-6">
                 <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-blue-500"/> Crear Bloque</h3>
@@ -192,15 +184,12 @@ export default function GestionPaciente() {
                   <button onClick={agregarBloque} className="w-full bg-blue-600 text-white font-bold p-2 rounded hover:bg-blue-700">Guardar Bloque</button>
                 </div>
               </div>
-
               <div className="space-y-3">
                 {bloques.map((m) => (
                   <div key={m.id} className="bg-white p-4 rounded-xl border flex justify-between">
                     <div>
                       <h4 className="font-bold">{m.nombre_bloque}</h4>
-                      <div className="text-xs text-slate-500 flex gap-2">
-                        <span>P: {m.meta_proteina}</span><span>G: {m.meta_grasa}</span><span>C: {m.meta_carbos}</span>
-                      </div>
+                      <div className="text-xs text-slate-500 flex gap-2"><span>P: {m.meta_proteina}</span><span>G: {m.meta_grasa}</span><span>C: {m.meta_carbos}</span></div>
                     </div>
                     <button onClick={() => borrarBloque(m.id)} className="text-red-400"><Trash2 className="w-4 h-4"/></button>
                   </div>
@@ -208,33 +197,45 @@ export default function GestionPaciente() {
               </div>
             </div>
 
-            {/* DERECHA: ALIMENTOS PERMITIDOS */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 h-fit">
+            {/* ALIMENTOS PROHIBIDOS (LISTA NEGRA) */}
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-red-100 h-fit">
               <h2 className="text-xl font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <Check className="w-5 h-5 text-green-600" /> Despensa Personalizada
+                <Ban className="w-5 h-5 text-red-600" /> Alimentos Restringidos
               </h2>
+              <p className="text-xs text-slate-500 mb-4">El paciente NO PODRÁ ver ni buscar estos alimentos.</p>
+
               <div className="relative mb-4">
-                <input className="w-full p-3 pl-10 border border-slate-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-green-500 outline-none" placeholder="Buscar para autorizar..." value={busquedaGlobal} onChange={e => buscarEnGlobal(e.target.value)}/>
+                <input className="w-full p-3 pl-10 border border-slate-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-red-500 outline-none" placeholder="Buscar para bloquear..." value={busquedaGlobal} onChange={e => buscarEnGlobal(e.target.value)}/>
                 <Search className="absolute left-3 top-3.5 text-slate-400 w-4 h-4" />
+                
                 {resultadosGlobales.length > 0 && (
                   <div className="absolute top-full left-0 right-0 bg-white border shadow-lg rounded-lg mt-1 z-10 max-h-40 overflow-auto">
                     {resultadosGlobales.map(alim => (
-                      <div key={alim.id} onClick={() => autorizarAlimento(alim)} className="p-2 hover:bg-green-50 cursor-pointer flex justify-between items-center border-b">
-                        <span>{alim.nombre}</span><Plus className="w-4 h-4 text-green-600" />
+                      <div key={alim.id} onClick={() => prohibirAlimento(alim)} className="p-2 hover:bg-red-50 cursor-pointer flex justify-between items-center border-b">
+                        <span>{alim.nombre}</span><Ban className="w-4 h-4 text-red-600" />
                       </div>
                     ))}
                   </div>
                 )}
               </div>
+
               <div className="border rounded-lg overflow-hidden max-h-[500px] overflow-y-auto">
                 <table className="w-full text-sm">
+                  <thead className="bg-red-50 text-red-900 font-bold">
+                    <tr><th className="p-3 text-left">Alimento Bloqueado</th><th className="p-3 text-right">Acción</th></tr>
+                  </thead>
                   <tbody>
-                    {permitidos.map((p) => (
-                      <tr key={p.permiso_id} className="border-b hover:bg-slate-50">
-                        <td className="p-3">{p.nombre}</td>
-                        <td className="p-3 text-right"><button onClick={() => prohibirAlimento(p.permiso_id)} className="text-red-400 hover:text-red-600"><Ban className="w-4 h-4" /></button></td>
+                    {prohibidos.map((p) => (
+                      <tr key={p.bloqueo_id} className="border-b hover:bg-slate-50">
+                        <td className="p-3 text-slate-700">{p.nombre}</td>
+                        <td className="p-3 text-right">
+                          <button onClick={() => desbloquearAlimento(p.bloqueo_id)} className="text-green-600 hover:text-green-800 flex items-center gap-1 justify-end ml-auto">
+                            <Unlock className="w-4 h-4" /> Permitir
+                          </button>
+                        </td>
                       </tr>
                     ))}
+                    {prohibidos.length === 0 && <tr><td colSpan={2} className="p-6 text-center text-slate-400">Este paciente tiene acceso a todo.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -242,23 +243,17 @@ export default function GestionPaciente() {
           </div>
         )}
 
-        {/* --- PESTAÑA 2: AUDITORÍA DIARIO (NUEVO) --- */}
+        {/* --- TAB AUDITORÍA (Sin cambios) --- */}
         {activeTab === 'diario' && (
           <div className="animate-in fade-in">
             <div className="bg-white p-4 rounded-xl border border-slate-200 mb-6 flex items-center gap-4">
               <Calendar className="text-indigo-600 w-6 h-6"/>
               <div>
                 <label className="text-xs font-bold text-slate-400 uppercase block">Fecha a revisar</label>
-                <input 
-                  type="date" 
-                  value={fechaAudit} 
-                  onChange={(e) => setFechaAudit(e.target.value)}
-                  className="font-bold text-slate-800 text-lg outline-none bg-transparent"
-                />
+                <input type="date" value={fechaAudit} onChange={(e) => setFechaAudit(e.target.value)} className="font-bold text-slate-800 text-lg outline-none bg-transparent"/>
               </div>
             </div>
-
-            {loadingDiario ? <p>Cargando datos del paciente...</p> : (
+            {loadingDiario ? <p>Cargando...</p> : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {bloques.length === 0 ? <p>No hay dieta asignada.</p> : bloques.map(renderBloqueAuditoria)}
               </div>
