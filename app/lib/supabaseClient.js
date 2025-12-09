@@ -1,11 +1,11 @@
-import { createClient } from '@supabase/supabase-js'
+import { createBrowserClient } from '@supabase/ssr'
 
-// --- ZONA DE DATOS DUROS (Solo para probar) ---
-// Pega aquí tu URL exacta que sale en Supabase (empieza con https://)
+// --- DATOS DE CONEXIÓN ---
+// Asegúrate de que estas variables estén en tu .env.local o pon las claves "duras" aquí si tienes problemas
 const supabaseUrl = 'https://byhmdmkccpwqieqjooqb.supabase.co'
-
-// Pega aquí tu llave "anon" / "public" (es la larga que empieza con eyJ...)
 const supabaseKey = 'sb_publishable__H2Z_vrHqgZiaJemq5l01w_vhbj0zY-'
-// ----------------------------------------------
 
-export const supabase = createClient(supabaseUrl, supabaseKey)
+// --- EL CAMBIO MÁGICO ---
+// Usamos createBrowserClient en lugar de createClient.
+// Esto permite que la app LEA las cookies de sesión de Google/Supabase automáticamente.
+export const supabase = createBrowserClient(supabaseUrl, supabaseKey)
