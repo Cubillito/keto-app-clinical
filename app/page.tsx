@@ -10,8 +10,7 @@ export default function PatientDashboard() {
   const [loading, setLoading] = useState(true)
   const [usuario, setUsuario] = useState<any>(null)
   
-  // --- NUEVO: ESTADO DE FECHA ---
-  // Empezamos con la fecha de hoy en formato YYYY-MM-DD local
+  // --- FECHA ---
   const [fecha, setFecha] = useState(new Date().toLocaleDateString('en-CA')) 
   
   // Datos
@@ -26,15 +25,12 @@ export default function PatientDashboard() {
   const [alimentoSeleccionado, setAlimentoSeleccionado] = useState<any>(null)
   const [gramos, setGramos] = useState('100')
 
-  // --- CONTROL DE FECHAS ---
   const cambiarDia = (dias: number) => {
-    const nuevaFecha = new Date(fecha + 'T12:00:00') // Truco para evitar problemas de zona horaria
+    const nuevaFecha = new Date(fecha + 'T12:00:00')
     nuevaFecha.setDate(nuevaFecha.getDate() + dias)
     setFecha(nuevaFecha.toLocaleDateString('en-CA'))
   }
 
-  // --- CARGA DE DATOS (Se ejecuta al inicio y al cambiar de fecha) ---
-  // --- CARGA DE DATOS (CON FILTRO DE PERMISOS) ---
   useEffect(() => {
     const cargar = async () => {
       setLoading(true)
@@ -42,39 +38,45 @@ export default function PatientDashboard() {
       if (!user) { router.push('/login'); return }
       setUsuario(user)
 
-      // 1. CATÁLOGO (EL CAMBIO CLAVE ESTÁ AQUÍ) 🔒
-      // En lugar de pedir 'alimentos', pedimos 'alimentos_permitidos'
+      // 1. Catálogo (Con filtro de permisos)
       if (catalogo.length === 0) {
         const { data: dataPermitidos } = await supabase
           .from('alimentos_permitidos')
-          .select('alimentos(*)') // Traemos el objeto alimento completo
+          .select('alimentos(*)')
           .eq('paciente_id', user.id)
         
-        // Supabase devuelve algo como: [{alimentos: {nombre: 'Pollo'...}}, {alimentos: {...}}]
-        // Lo "limpiamos" para que sea una lista plana de alimentos
         const listaLimpia = dataPermitidos?.map((item: any) => item.alimentos) || []
-        
         setCatalogo(listaLimpia)
       }
 
-      // 2. Bloques (Metas) - Igual que antes
+      // 2. Bloques
       const { data: dataBloques } = await supabase.from('metas_por_comida').select('*').eq('paciente_id', user.id).order('id', { ascending: true })
       setBloques(dataBloques || [])
 
-      // 3. Diario (FILTRADO POR FECHA) - Igual que antes
+      // 3. Diario
       const { data: dataDiario } = await supabase
         .from('diario_comidas')
         .select('*, alimentos(*)')
         .eq('paciente_id', user.id)
-        .eq('fecha', fecha) // Respeta el calendario
+        .eq('fecha', fecha)
       
       setDiario(dataDiario || [])
       setLoading(false)
     }
     cargar()
-  }, [fecha]) // Se recarga si cambias la fecha
+  }, [fecha])
 
-  // --- ALGORITMO COMBO CLÍNICO (Mantenemos tu lógica avanzada) ---
+  // --- AQUÍ ESTABA EL ERROR: AGREGAMOS LA FUNCIÓN QUE FALTABA ---
+  const buscarAlimento = async (txt: string) => {
+    setBusqueda(txt)
+    if (txt.length < 3) { setResultados([]); return }
+    // Filtramos del catálogo ya cargado (que ya tiene los permisos aplicados)
+    const encontrados = catalogo.filter(a => a.nombre.toLowerCase().includes(txt.toLowerCase())).slice(0, 10)
+    setResultados(encontrados)
+  }
+  // -------------------------------------------------------------
+
+  // --- ALGORITMO COMBO CLÍNICO ---
   const generarComboRecomendado = (bloque: any, actualP: number, actualG: number, actualC: number) => {
     const faltaP = Math.max(0, bloque.meta_proteina - actualP)
     const ratioMeta = bloque.ratio_ideal || 2.0 
@@ -83,7 +85,6 @@ export default function PatientDashboard() {
 
     let recomendacion: any[] = []
 
-    // Paso 1: Base Proteica
     if (faltaP > 3) {
       const opcionesProt = catalogo.filter(a => a.proteina > 10 && a.carbos < 2)
       if (opcionesProt.length > 0) {
@@ -93,7 +94,6 @@ export default function PatientDashboard() {
       }
     }
 
-    // Paso 2: Ajuste Grasa
     let pProyectada = actualP
     let gProyectada = actualG
     let cProyectada = actualC
@@ -129,7 +129,7 @@ export default function PatientDashboard() {
       bloque_id: bloque.id,
       gramos_consumidos: item.gramos,
       nombre_comida_asignada: bloque.nombre_bloque,
-      fecha: fecha // <--- Guardamos en la fecha seleccionada
+      fecha: fecha 
     }))
     const { error } = await supabase.from('diario_comidas').insert(inserts)
     if (error) alert("Error: " + error.message)
@@ -145,7 +145,7 @@ export default function PatientDashboard() {
       bloque_id: bloqueSeleccionado.id,
       gramos_consumidos: g,
       nombre_comida_asignada: bloqueSeleccionado.nombre_bloque,
-      fecha: fecha // <--- Guardamos en la fecha seleccionada
+      fecha: fecha
     })
     if (error) alert(error.message)
     else window.location.reload()
@@ -205,7 +205,6 @@ export default function PatientDashboard() {
             </div>
           </div>
           <div className="grid grid-cols-3 gap-2 mt-4 text-center">
-             {/* ... Macros igual que antes ... */}
              <div className="bg-white p-1 rounded border border-slate-100"><div className="text-[10px] text-slate-400 font-bold">PROT</div><div className="font-bold text-sm">{sumaP.toFixed(1)} / {bloque.meta_proteina}</div></div>
              <div className="bg-white p-1 rounded border border-slate-100"><div className="text-[10px] text-slate-400 font-bold">GRASA</div><div className="font-bold text-sm">{sumaG.toFixed(1)} / {bloque.meta_grasa}</div></div>
              <div className="bg-white p-1 rounded border border-slate-100"><div className="text-[10px] text-slate-400 font-bold">CARB</div><div className="font-bold text-sm">{sumaC.toFixed(1)} / {bloque.meta_carbos}</div></div>
@@ -261,41 +260,25 @@ export default function PatientDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20">
-      
-      {/* HEADER CON CALENDARIO (NUEVO) */}
       <header className="bg-white shadow-sm sticky top-0 z-10 border-b border-slate-200">
         <div className="flex justify-between items-center p-4 pb-2">
            <h1 className="font-bold text-xl text-slate-800 tracking-tight">Mi Diario Keto</h1>
            <button onClick={() => { supabase.auth.signOut(); router.push('/login') }} className="text-slate-400 hover:text-red-500 p-2"><LogOut className="w-5 h-5"/></button>
         </div>
-        
-        {/* BARRA DE NAVEGACIÓN DE FECHA */}
         <div className="flex items-center justify-between px-4 pb-4 pt-0">
-           <button onClick={() => cambiarDia(-1)} className="p-2 bg-slate-50 rounded-lg hover:bg-slate-100 border border-slate-100 text-slate-600">
-             <ChevronLeft className="w-5 h-5" />
-           </button>
-           
+           <button onClick={() => cambiarDia(-1)} className="p-2 bg-slate-50 rounded-lg hover:bg-slate-100 border border-slate-100 text-slate-600"><ChevronLeft className="w-5 h-5" /></button>
            <div className="flex items-center gap-2 text-slate-700 font-bold bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
-             <CalendarIcon className="w-4 h-4 text-blue-500" />
-             {/* Si es hoy, muestra "Hoy", si no, la fecha */}
-             {fecha === new Date().toLocaleDateString('en-CA') ? 'Hoy' : fecha}
+             <CalendarIcon className="w-4 h-4 text-blue-500" /> {fecha === new Date().toLocaleDateString('en-CA') ? 'Hoy' : fecha}
            </div>
-
-           <button onClick={() => cambiarDia(1)} className="p-2 bg-slate-50 rounded-lg hover:bg-slate-100 border border-slate-100 text-slate-600">
-             <ChevronRight className="w-5 h-5" />
-           </button>
+           <button onClick={() => cambiarDia(1)} className="p-2 bg-slate-50 rounded-lg hover:bg-slate-100 border border-slate-100 text-slate-600"><ChevronRight className="w-5 h-5" /></button>
         </div>
       </header>
 
       <main className="p-4 max-w-lg mx-auto">
-        {bloques.length === 0 ? (
-            <div className="text-center py-12 text-slate-400">Sin plan nutricional</div>
-        ) : (
-          bloques.map(renderBloque)
-        )}
+        {bloques.length === 0 ? <div className="text-center py-12 text-slate-400">Sin plan nutricional</div> : bloques.map(renderBloque)}
       </main>
 
-      {/* MODALES MANUALES (Resumido) */}
+      {/* MODALES */}
       {bloqueSeleccionado && !alimentoSeleccionado && (
         <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm">
           <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl h-[80vh] sm:h-auto flex flex-col">
