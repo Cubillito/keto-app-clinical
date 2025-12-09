@@ -156,7 +156,7 @@ export default function LoginPage() {
       {/* FOOTER - TU MARCA */}
       <div className="mt-8 text-center animate-in fade-in slide-in-from-bottom-4 duration-1000">
         <p className="text-slate-400 text-xs font-medium tracking-wide">
-          Hecho con <Heart className="w-3 h-3 text-red-400 inline mx-0.5 animate-pulse"/> por
+          Hecho por
         </p>
         <p className="text-slate-600 text-sm font-bold mt-1">
           Ignacio Cubillos Leal
