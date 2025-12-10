@@ -9,15 +9,15 @@ export default function PatientDashboard() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [usuario, setUsuario] = useState<any>(null)
-  
-  // --- FECHA ---
-  const [fecha, setFecha] = useState(new Date().toLocaleDateString('en-CA')) 
-  
+
+  // --- FECHA SELECCIONADA ---
+  const [fecha, setFecha] = useState(new Date().toLocaleDateString('en-CA'))
+
   // Datos
-  const [bloques, setBloques] = useState<any[]>([]) 
-  const [diario, setDiario] = useState<any[]>([])   
-  const [catalogo, setCatalogo] = useState<any[]>([]) 
-  
+  const [bloques, setBloques] = useState<any[]>([])
+  const [diario, setDiario] = useState<any[]>([])
+  const [catalogo, setCatalogo] = useState<any[]>([])
+
   // UI
   const [busqueda, setBusqueda] = useState('')
   const [resultados, setResultados] = useState<any[]>([])
@@ -38,88 +38,110 @@ export default function PatientDashboard() {
       if (!user) { router.push('/login'); return }
       setUsuario(user)
 
-      // 1. CARGAR CATÁLOGO (LÓGICA LISTA NEGRA) ⚫
-      // A. Traemos TODOS los alimentos del sistema
-      const { data: todosAlimentos } = await supabase.from('alimentos').select('*')
-      
-      // B. Traemos los IDs PROHIBIDOS para este paciente
-      const { data: prohibidos } = await supabase
-        .from('alimentos_prohibidos')
-        .select('alimento_id')
+      // 1. CATÁLOGO (Filtrado por prohibidos)
+      if (catalogo.length === 0) {
+        const { data: todosAlimentos } = await supabase.from('alimentos').select('*')
+        const { data: prohibidos } = await supabase.from('alimentos_prohibidos').select('alimento_id').eq('paciente_id', user.id)
+
+        const idsProhibidos = new Set(prohibidos?.map(p => p.alimento_id))
+        const catalogoFiltrado = todosAlimentos?.filter(a => !idsProhibidos.has(a.id)) || []
+        setCatalogo(catalogoFiltrado)
+      }
+
+      // 2. BLOQUES (CON LÓGICA DE HISTORIAL) ⏳
+      // Traemos todos los bloques del usuario
+      const { data: allBloques } = await supabase
+        .from('metas_por_comida')
+        .select('*')
         .eq('paciente_id', user.id)
-      
-      // C. Filtramos: Catálogo = Todos - Prohibidos
-      // Creamos un Set de IDs prohibidos para búsqueda rápida
-      const idsProhibidos = new Set(prohibidos?.map(p => p.alimento_id))
-      const catalogoFiltrado = todosAlimentos?.filter(a => !idsProhibidos.has(a.id)) || []
-      
-      setCatalogo(catalogoFiltrado)
+        .order('id', { ascending: true })
 
-      // 2. Bloques (Igual que antes)
-      const { data: dataBloques } = await supabase.from('metas_por_comida').select('*').eq('paciente_id', user.id).order('id', { ascending: true })
-      setBloques(dataBloques || [])
+      // FILTRO DE VIGENCIA:
+      // El bloque debe haber iniciado ANTES o IGUAL a la fecha que miro
+      // Y (no tener fecha fin O tener fecha fin DESPUES de la fecha que miro)
+      const bloquesVigentes = allBloques?.filter(b => {
+        const fInicio = b.fecha_inicio
+        const fFin = b.fecha_fin
+        return fInicio <= fecha && (!fFin || fFin >= fecha)
+      }) || []
 
-      // 3. Diario (Igual que antes)
+      setBloques(bloquesVigentes)
+
+      // 3. DIARIO
       const { data: dataDiario } = await supabase
         .from('diario_comidas')
         .select('*, alimentos(*)')
         .eq('paciente_id', user.id)
         .eq('fecha', fecha)
-      
+
       setDiario(dataDiario || [])
       setLoading(false)
     }
     cargar()
   }, [fecha])
 
-  // --- AQUÍ ESTABA EL ERROR: AGREGAMOS LA FUNCIÓN QUE FALTABA ---
   const buscarAlimento = async (txt: string) => {
     setBusqueda(txt)
     if (txt.length < 3) { setResultados([]); return }
-    // Filtramos del catálogo ya cargado (que ya tiene los permisos aplicados)
     const encontrados = catalogo.filter(a => a.nombre.toLowerCase().includes(txt.toLowerCase())).slice(0, 10)
     setResultados(encontrados)
   }
-  // -------------------------------------------------------------
 
-  // --- ALGORITMO COMBO CLÍNICO ---
+  // --- ALGORITMO BALANCEADO (2:1:1) 🧠 ---
   const generarComboRecomendado = (bloque: any, actualP: number, actualG: number, actualC: number) => {
+    // Calculamos los huecos reales para llegar a la meta
     const faltaP = Math.max(0, bloque.meta_proteina - actualP)
-    const ratioMeta = bloque.ratio_ideal || 2.0 
+    const faltaG = Math.max(0, bloque.meta_grasa - actualG)
+    const faltaC = Math.max(0, bloque.meta_carbos - actualC)
 
-    if (faltaP < 2 && (bloque.meta_grasa - actualG) < 5) return null
+    // Si falta poco de todo, no sugerimos
+    if (faltaP < 2 && faltaG < 3 && faltaC < 2) return null
 
     let recomendacion: any[] = []
 
-    if (faltaP > 3) {
+    // ESTRATEGIA: Llenar huecos específicos sin desbordar los otros
+
+    // PASO 1: PROTEÍNA (El pilar)
+    if (faltaP > 5) {
+      // Buscamos algo alto en proteina y bajo en carbo (Carnes/Huevos)
       const opcionesProt = catalogo.filter(a => a.proteina > 10 && a.carbos < 2)
       if (opcionesProt.length > 0) {
-        const alimentoBase = opcionesProt[Math.floor(Math.random() * opcionesProt.length)]
-        const gramosBase = (faltaP / alimentoBase.proteina) * 100
-        recomendacion.push({ alimento: alimentoBase, gramos: Math.round(gramosBase), razon: 'Base Proteica' })
+        const base = opcionesProt[Math.floor(Math.random() * opcionesProt.length)]
+        const gramos = (faltaP / base.proteina) * 100
+        recomendacion.push({ alimento: base, gramos: Math.round(gramos), razon: 'Proteína Base' })
       }
     }
 
-    let pProyectada = actualP
-    let gProyectada = actualG
-    let cProyectada = actualC
+    // Simulamos cómo quedaría la dieta con el paso 1
+    let pProy = actualP + (recomendacion[0] ? (recomendacion[0].alimento.proteina * recomendacion[0].gramos) / 100 : 0)
+    let gProy = actualG + (recomendacion[0] ? (recomendacion[0].alimento.grasa * recomendacion[0].gramos) / 100 : 0)
+    let cProy = actualC + (recomendacion[0] ? (recomendacion[0].alimento.carbos * recomendacion[0].gramos) / 100 : 0)
 
-    if (recomendacion.length > 0) {
-      const base = recomendacion[0]
-      pProyectada += (base.alimento.proteina * base.gramos) / 100
-      gProyectada += (base.alimento.grasa * base.gramos) / 100
-      cProyectada += (base.alimento.carbos * base.gramos) / 100
+    // Recalculamos faltantes proyectados
+    const faltaG_Proy = Math.max(0, bloque.meta_grasa - gProy)
+    const faltaC_Proy = Math.max(0, bloque.meta_carbos - cProy)
+
+    // PASO 2: GRASAS (Para el Ratio)
+    if (faltaG_Proy > 5) {
+      const opcionesGrasa = catalogo.filter(a => a.grasa > 15 && a.carbos < 2 && a.proteina < 5)
+      if (opcionesGrasa.length > 0) {
+        const grasa = opcionesGrasa.find(a => a.nombre.includes('MCT') || a.nombre.includes('Aceite')) || opcionesGrasa[0]
+        const gramos = (faltaG_Proy / grasa.grasa) * 100
+        recomendacion.push({ alimento: grasa, gramos: Math.round(gramos), razon: 'Ajuste Grasa' })
+      }
     }
 
-    const grasaNecesariaTotal = ratioMeta * (pProyectada + cProyectada)
-    const grasaFaltanteParaRatio = Math.max(0, grasaNecesariaTotal - gProyectada)
-
-    if (grasaFaltanteParaRatio > 3) {
-      const opcionesGrasa = catalogo.filter(a => a.grasa > 20 && a.proteina < 5 && a.carbos < 5)
-      if (opcionesGrasa.length > 0) {
-        const grasaPreferida = opcionesGrasa.find(a => a.nombre.toUpperCase().includes('MCT') || a.nombre.toUpperCase().includes('OLIVA')) || opcionesGrasa[Math.floor(Math.random() * opcionesGrasa.length)]
-        const gramosGrasa = (grasaFaltanteParaRatio / grasaPreferida.grasa) * 100
-        recomendacion.push({ alimento: grasaPreferida, gramos: Math.round(gramosGrasa), razon: 'Ajuste de Ratio' })
+    // PASO 3: CARBOS (Solo si falta para el 2:1:1 y es seguro)
+    // En Keto clínico, a veces hay que "rellenar" carbs (ej: verduras) para no quedar en 0
+    if (faltaC_Proy > 3) {
+      const opcionesVeg = catalogo.filter(a => a.categoria === 'VERDURAS' || (a.carbos > 3 && a.carbos < 10 && a.proteina < 3))
+      if (opcionesVeg.length > 0) {
+        const veg = opcionesVeg[Math.floor(Math.random() * opcionesVeg.length)]
+        const gramos = (faltaC_Proy / veg.carbos) * 100
+        // Solo agregamos si no es una cantidad absurda de verdura (>200g puede inflar el estómago)
+        if (gramos < 200) {
+          recomendacion.push({ alimento: veg, gramos: Math.round(gramos), razon: 'Fibra/Carbo' })
+        }
       }
     }
 
@@ -135,7 +157,7 @@ export default function PatientDashboard() {
       bloque_id: bloque.id,
       gramos_consumidos: item.gramos,
       nombre_comida_asignada: bloque.nombre_bloque,
-      fecha: fecha 
+      fecha: fecha
     }))
     const { error } = await supabase.from('diario_comidas').insert(inserts)
     if (error) alert("Error: " + error.message)
@@ -158,62 +180,61 @@ export default function PatientDashboard() {
   }
 
   const borrarComida = async (idDiario: string) => {
-    if(!confirm("¿Borrar?")) return
+    if (!confirm("¿Borrar?")) return
     await supabase.from('diario_comidas').delete().eq('id', idDiario)
     window.location.reload()
   }
 
   const renderBloque = (bloque: any) => {
     const comidasEsteBloque = diario.filter(d => d.bloque_id === bloque.id)
-    
-    const sumaP = comidasEsteBloque.reduce((acc, el) => acc + ((el.alimentos.proteina * el.gramos_consumidos)/100), 0)
-    const sumaG = comidasEsteBloque.reduce((acc, el) => acc + ((el.alimentos.grasa * el.gramos_consumidos)/100), 0)
-    const sumaC = comidasEsteBloque.reduce((acc, el) => acc + ((el.alimentos.carbos * el.gramos_consumidos)/100), 0)
+    const sumaP = comidasEsteBloque.reduce((acc, el) => acc + ((el.alimentos.proteina * el.gramos_consumidos) / 100), 0)
+    const sumaG = comidasEsteBloque.reduce((acc, el) => acc + ((el.alimentos.grasa * el.gramos_consumidos) / 100), 0)
+    const sumaC = comidasEsteBloque.reduce((acc, el) => acc + ((el.alimentos.carbos * el.gramos_consumidos) / 100), 0)
 
     const calMeta = Math.round((bloque.meta_proteina * 4) + (bloque.meta_carbos * 4) + (bloque.meta_grasa * 9))
     const calActual = Math.round((sumaP * 4) + (sumaC * 4) + (sumaG * 9))
-    
+
+    // Ratio
     const denominador = sumaP + sumaC
     const ratioActual = denominador > 0 ? (sumaG / denominador).toFixed(1) : '0.0'
     const ratioMeta = bloque.ratio_ideal || 2.0
-    const diffRatio = Math.abs(parseFloat(ratioActual) - ratioMeta)
-    const ratioStatus = diffRatio < 0.3 ? 'ok' : 'alerta'
-    const colorRatio = ratioStatus === 'ok' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-rose-100 text-rose-800 border-rose-200'
 
-    const cumplido = Math.abs(sumaP - bloque.meta_proteina) < 2 && diffRatio < 0.3
+    // Cumplimiento estricto (Tolerancia pequeña)
+    const cumplido = Math.abs(sumaP - bloque.meta_proteina) < 3 && Math.abs(sumaG - bloque.meta_grasa) < 5
+
     const combo = generarComboRecomendado(bloque, sumaP, sumaG, sumaC)
 
     return (
       <div key={bloque.id} className={`bg-white rounded-xl border-2 mb-8 overflow-hidden shadow-sm ${cumplido ? 'border-green-400' : 'border-slate-100'}`}>
         <div className="bg-slate-50 p-4 border-b border-slate-100">
           <div className="flex justify-between items-start mb-2">
-             <h3 className="font-bold text-xl text-slate-800">{bloque.nombre_bloque}</h3>
-             {cumplido ? (
-               <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold shadow-sm"><CheckCircle className="w-3 h-3"/> LISTO</span>
-             ) : (
-               <span className="inline-flex items-center gap-1 bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs font-bold shadow-sm"><AlertCircle className="w-3 h-3"/> AJUSTAR</span>
-             )}
+            <h3 className="font-bold text-xl text-slate-800">{bloque.nombre_bloque}</h3>
+            {cumplido ? (
+              <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold shadow-sm"><CheckCircle className="w-3 h-3" /> LISTO</span>
+            ) : (
+              <span className="inline-flex items-center gap-1 bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs font-bold shadow-sm"><AlertCircle className="w-3 h-3" /> AJUSTAR</span>
+            )}
           </div>
           <div className="flex flex-wrap gap-2 mt-2">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${colorRatio}`}>
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-slate-100 text-slate-600`}>
               <Activity className="w-4 h-4" />
               <div className="flex flex-col leading-none">
                 <span className="text-[10px] uppercase font-bold opacity-70">Ratio</span>
-                <span className="font-bold text-sm">{ratioActual} <span className="text-[10px] opacity-60">/ {ratioMeta}</span></span>
+                <span className="font-bold text-sm">{ratioActual} / {ratioMeta}</span>
               </div>
             </div>
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-blue-50 text-blue-800 border-blue-100`}>
               <TrendingUp className="w-4 h-4" />
               <div className="flex flex-col leading-none">
                 <span className="text-[10px] uppercase font-bold opacity-70">Calorías</span>
-                <span className="font-bold text-sm">{calActual} <span className="text-[10px] opacity-60">/ {calMeta}</span></span>
+                <span className="font-bold text-sm">{calActual} / {calMeta}</span>
               </div>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-2 mt-4 text-center">
-             <div className="bg-white p-1 rounded border border-slate-100"><div className="text-[10px] text-slate-400 font-bold">PROT</div><div className="font-bold text-sm">{sumaP.toFixed(1)} / {bloque.meta_proteina}</div></div>
-             <div className="bg-white p-1 rounded border border-slate-100"><div className="text-[10px] text-slate-400 font-bold">GRASA</div><div className="font-bold text-sm">{sumaG.toFixed(1)} / {bloque.meta_grasa}</div></div>
-             <div className="bg-white p-1 rounded border border-slate-100"><div className="text-[10px] text-slate-400 font-bold">CARB</div><div className="font-bold text-sm">{sumaC.toFixed(1)} / {bloque.meta_carbos}</div></div>
+            <div className="bg-white p-1 rounded border border-slate-100"><div className="text-[10px] text-slate-400 font-bold">PROT</div><div className="font-bold text-sm">{sumaP.toFixed(1)} / {bloque.meta_proteina}</div></div>
+            <div className="bg-white p-1 rounded border border-slate-100"><div className="text-[10px] text-slate-400 font-bold">GRASA</div><div className="font-bold text-sm">{sumaG.toFixed(1)} / {bloque.meta_grasa}</div></div>
+            <div className="bg-white p-1 rounded border border-slate-100"><div className="text-[10px] text-slate-400 font-bold">CARB</div><div className="font-bold text-sm">{sumaC.toFixed(1)} / {bloque.meta_carbos}</div></div>
           </div>
         </div>
 
@@ -221,15 +242,15 @@ export default function PatientDashboard() {
           {comidasEsteBloque.length > 0 ? (
             comidasEsteBloque.map((item: any) => (
               <div key={item.id} className="flex justify-between items-center text-sm bg-slate-50 p-3 rounded-lg border border-slate-100">
-                 <div>
-                   <span className="font-bold text-slate-700 block">{item.alimentos.nombre}</span>
-                   <span className="text-slate-400 text-xs">{item.gramos_consumidos}g</span>
-                 </div>
-                 <button onClick={() => borrarComida(item.id)} className="text-red-300 hover:text-red-500 hover:bg-red-50 p-2 rounded"><Trash2 className="w-4 h-4"/></button>
+                <div>
+                  <span className="font-bold text-slate-700 block">{item.alimentos.nombre}</span>
+                  <span className="text-slate-400 text-xs">{item.gramos_consumidos}g</span>
+                </div>
+                <button onClick={() => borrarComida(item.id)} className="text-red-300 hover:text-red-500 hover:bg-red-50 p-2 rounded"><Trash2 className="w-4 h-4" /></button>
               </div>
             ))
           ) : (
-             <p className="text-center text-slate-300 text-sm py-2 italic">Bloque vacío</p>
+            <p className="text-center text-slate-300 text-sm py-2 italic">Bloque vacío</p>
           )}
 
           {!cumplido && combo && combo.length > 0 && (
@@ -237,17 +258,17 @@ export default function PatientDashboard() {
               <div className="flex items-start gap-3">
                 <div className="bg-white p-2 rounded-full text-indigo-600 mt-1 shadow-sm"><Sparkles className="w-5 h-5" /></div>
                 <div className="flex-1">
-                  <h4 className="text-indigo-900 font-bold text-sm mb-2">Combo Clínico Sugerido</h4>
+                  <h4 className="text-indigo-900 font-bold text-sm mb-2">Sugerencia Balanceada (2:1:1)</h4>
                   <div className="space-y-2 mb-3">
                     {combo.map((item: any, idx: number) => (
                       <div key={idx} className="flex items-center gap-2 text-sm bg-white/60 p-2 rounded border border-indigo-100/50">
                         <span className="font-bold text-slate-700">{item.alimento.nombre}</span>
-                        <span className="text-slate-500 text-xs ml-2">x {item.gramos}g</span>
+                        <span className="text-slate-500 text-xs ml-2">x {item.gramos}g ({item.razon})</span>
                       </div>
                     ))}
                   </div>
                   <button onClick={() => agregarCombo(combo, bloque)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-3 rounded-lg flex items-center justify-center gap-2 shadow-md">
-                    Agregar Combo <ArrowRight className="w-3 h-3" />
+                    Agregar Todo <ArrowRight className="w-3 h-3" />
                   </button>
                 </div>
               </div>
@@ -268,23 +289,25 @@ export default function PatientDashboard() {
     <div className="min-h-screen bg-slate-50 pb-20">
       <header className="bg-white shadow-sm sticky top-0 z-10 border-b border-slate-200">
         <div className="flex justify-between items-center p-4 pb-2">
-           <h1 className="font-bold text-xl text-slate-800 tracking-tight">Mi Diario Keto</h1>
-           <button onClick={() => { supabase.auth.signOut(); router.push('/login') }} className="text-slate-400 hover:text-red-500 p-2"><LogOut className="w-5 h-5"/></button>
+          <h1 className="font-bold text-xl text-slate-800 tracking-tight">Mi Diario Keto</h1>
+          <div className="flex gap-2">
+            <button onClick={() => router.push('/progreso')} className="bg-blue-50 text-blue-600 p-2 rounded-lg hover:bg-blue-100 transition"><TrendingUp className="w-5 h-5" /></button>
+            <button onClick={() => { supabase.auth.signOut(); router.push('/login') }} className="text-slate-400 hover:text-red-500 p-2"><LogOut className="w-5 h-5" /></button>
+          </div>
         </div>
         <div className="flex items-center justify-between px-4 pb-4 pt-0">
-           <button onClick={() => cambiarDia(-1)} className="p-2 bg-slate-50 rounded-lg hover:bg-slate-100 border border-slate-100 text-slate-600"><ChevronLeft className="w-5 h-5" /></button>
-           <div className="flex items-center gap-2 text-slate-700 font-bold bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
-             <CalendarIcon className="w-4 h-4 text-blue-500" /> {fecha === new Date().toLocaleDateString('en-CA') ? 'Hoy' : fecha}
-           </div>
-           <button onClick={() => cambiarDia(1)} className="p-2 bg-slate-50 rounded-lg hover:bg-slate-100 border border-slate-100 text-slate-600"><ChevronRight className="w-5 h-5" /></button>
+          <button onClick={() => cambiarDia(-1)} className="p-2 bg-slate-50 rounded-lg hover:bg-slate-100 border border-slate-100 text-slate-600"><ChevronLeft className="w-5 h-5" /></button>
+          <div className="flex items-center gap-2 text-slate-700 font-bold bg-slate-50 px-4 py-2 rounded-lg border border-slate-100">
+            <CalendarIcon className="w-4 h-4 text-blue-500" /> {fecha === new Date().toLocaleDateString('en-CA') ? 'Hoy' : fecha}
+          </div>
+          <button onClick={() => cambiarDia(1)} className="p-2 bg-slate-50 rounded-lg hover:bg-slate-100 border border-slate-100 text-slate-600"><ChevronRight className="w-5 h-5" /></button>
         </div>
       </header>
 
       <main className="p-4 max-w-lg mx-auto">
-        {bloques.length === 0 ? <div className="text-center py-12 text-slate-400">Sin plan nutricional</div> : bloques.map(renderBloque)}
+        {bloques.length === 0 ? <div className="text-center py-12 text-slate-400">Sin plan nutricional para esta fecha</div> : bloques.map(renderBloque)}
       </main>
 
-      {/* MODALES */}
       {bloqueSeleccionado && !alimentoSeleccionado && (
         <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm">
           <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl h-[80vh] sm:h-auto flex flex-col">
@@ -298,7 +321,7 @@ export default function PatientDashboard() {
                 {resultados.map(r => (
                   <div key={r.id} onClick={() => setAlimentoSeleccionado(r)} className="p-4 border border-slate-100 rounded-xl hover:bg-blue-50 cursor-pointer flex justify-between items-center">
                     <span className="font-bold text-slate-700">{r.nombre}</span>
-                    <PlusCircle className="text-blue-500 w-6 h-6"/>
+                    <PlusCircle className="text-blue-500 w-6 h-6" />
                   </div>
                 ))}
               </div>
@@ -309,15 +332,15 @@ export default function PatientDashboard() {
 
       {alimentoSeleccionado && (
         <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-           <div className="bg-white w-full max-w-sm rounded-2xl p-6 shadow-2xl">
-              <h4 className="text-lg font-bold text-center text-slate-800 mb-6">¿Cuánto {alimentoSeleccionado.nombre}?</h4>
-              <div className="flex items-center justify-center gap-3 mb-8">
-                <input type="number" value={gramos} onChange={e => setGramos(e.target.value)} className="text-4xl font-black text-center w-32 border-b-4 border-blue-500 outline-none py-2 text-slate-800" autoFocus />
-                <span className="text-slate-400 font-bold text-xl mt-2">gramos</span>
-              </div>
-              <button onClick={agregarManual} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800 shadow-lg">Confirmar</button>
-              <button onClick={() => setAlimentoSeleccionado(null)} className="w-full mt-3 py-3 text-slate-400 font-bold text-sm">Cancelar</button>
-           </div>
+          <div className="bg-white w-full max-w-sm rounded-2xl p-6 shadow-2xl">
+            <h4 className="text-lg font-bold text-center text-slate-800 mb-6">¿Cuánto {alimentoSeleccionado.nombre}?</h4>
+            <div className="flex items-center justify-center gap-3 mb-8">
+              <input type="number" value={gramos} onChange={e => setGramos(e.target.value)} className="text-4xl font-black text-center w-32 border-b-4 border-blue-500 outline-none py-2 text-slate-800" autoFocus />
+              <span className="text-slate-400 font-bold text-xl mt-2">gramos</span>
+            </div>
+            <button onClick={agregarManual} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800 shadow-lg">Confirmar</button>
+            <button onClick={() => setAlimentoSeleccionado(null)} className="w-full mt-3 py-3 text-slate-400 font-bold text-sm">Cancelar</button>
+          </div>
         </div>
       )}
     </div>

@@ -10,16 +10,16 @@ export default function GestionPaciente() {
   const router = useRouter()
   const [paciente, setPaciente] = useState<any>(null)
   const [activeTab, setActiveTab] = useState<'plan' | 'diario'>('plan')
-  
+
   // --- DATOS ---
   const [bloques, setBloques] = useState<any[]>([])
-  
+
   // --- ESTADOS TAB PLANIFICACIÓN ---
   // Ahora "prohibidos" guarda lo que NO pueden comer
   const [prohibidos, setProhibidos] = useState<any[]>([])
   const [busquedaGlobal, setBusquedaGlobal] = useState('')
   const [resultadosGlobales, setResultadosGlobales] = useState<any[]>([])
-  
+
   const [nuevoBloque, setNuevoBloque] = useState('')
   const [metaProt, setMetaProt] = useState('')
   const [metaGrasa, setMetaGrasa] = useState('')
@@ -51,10 +51,10 @@ export default function GestionPaciente() {
       .from('alimentos_prohibidos')
       .select('id, alimento_id, alimentos(*)')
       .eq('paciente_id', id)
-    
-    const listaLimpia = prohibidosData?.map((item: any) => ({ 
+
+    const listaLimpia = prohibidosData?.map((item: any) => ({
       bloqueo_id: item.id, // ID del bloqueo
-      ...item.alimentos 
+      ...item.alimentos
     }))
     setProhibidos(listaLimpia || [])
   }
@@ -67,20 +67,40 @@ export default function GestionPaciente() {
   }
 
   // --- LOGICA BLOQUES ---
+  // ... (El resto del código igual)
+
+  // LOGICA TEMPORAL ⏳
   const agregarBloque = async () => {
     if (!nuevoBloque) return alert("Falta nombre")
+
+    // Crear bloque válido desde HOY
+    const fechaHoy = new Date().toISOString().split('T')[0]
+
     await supabase.from('metas_por_comida').insert({
-      paciente_id: id, nombre_bloque: nuevoBloque,
-      meta_proteina: parseFloat(metaProt)||0, meta_grasa: parseFloat(metaGrasa)||0, 
-      meta_carbos: parseFloat(metaCarbo)||0, ratio_ideal: parseFloat(ratio)||0
+      paciente_id: id,
+      nombre_bloque: nuevoBloque,
+      meta_proteina: parseFloat(metaProt) || 0,
+      meta_grasa: parseFloat(metaGrasa) || 0,
+      meta_carbos: parseFloat(metaCarbo) || 0,
+      ratio_ideal: parseFloat(ratio) || 0,
+      fecha_inicio: fechaHoy // <--- IMPORTANTE
     })
     setNuevoBloque(''); setMetaProt(''); setMetaGrasa(''); setMetaCarbo('');
     cargarDatosGenerales()
   }
 
   const borrarBloque = async (bloqueId: number) => {
-    if(!confirm("¿Borrar bloque?")) return
-    await supabase.from('metas_por_comida').delete().eq('id', bloqueId)
+    if (!confirm("¿Eliminar bloque? (Se mantendrá en el historial pasado)")) return
+
+    // NO borramos la fila (DELETE). La "cerramos" con fecha de ayer.
+    const fechaAyer = new Date()
+    fechaAyer.setDate(fechaAyer.getDate() - 1)
+    const strAyer = fechaAyer.toISOString().split('T')[0]
+
+    await supabase.from('metas_por_comida')
+      .update({ fecha_fin: strAyer }) // <--- Cierre de vigencia
+      .eq('id', bloqueId)
+
     cargarDatosGenerales()
   }
 
@@ -118,19 +138,19 @@ export default function GestionPaciente() {
   // --- RENDERIZADO DIARIO ---
   const renderBloqueAuditoria = (bloque: any) => {
     const comidas = diarioAudit.filter(d => d.bloque_id === bloque.id)
-    const sumaP = comidas.reduce((acc, el) => acc + ((el.alimentos.proteina * el.gramos_consumidos)/100), 0)
-    const sumaG = comidas.reduce((acc, el) => acc + ((el.alimentos.grasa * el.gramos_consumidos)/100), 0)
+    const sumaP = comidas.reduce((acc, el) => acc + ((el.alimentos.proteina * el.gramos_consumidos) / 100), 0)
+    const sumaG = comidas.reduce((acc, el) => acc + ((el.alimentos.grasa * el.gramos_consumidos) / 100), 0)
     const cumplido = Math.abs(sumaP - bloque.meta_proteina) < 2
 
     return (
       <div key={bloque.id} className={`bg-white p-4 rounded-xl border mb-4 ${cumplido ? 'border-green-300 bg-green-50/30' : 'border-red-200 bg-red-50/30'}`}>
         <div className="flex justify-between items-center mb-3">
           <h4 className="font-bold text-slate-800">{bloque.nombre_bloque}</h4>
-          {cumplido ? <CheckCircle className="w-5 h-5 text-green-600"/> : <AlertCircle className="w-5 h-5 text-red-500"/>}
+          {cumplido ? <CheckCircle className="w-5 h-5 text-green-600" /> : <AlertCircle className="w-5 h-5 text-red-500" />}
         </div>
         <div className="flex gap-4 text-xs font-mono text-slate-600 mb-3 bg-white/50 p-2 rounded">
-           <span>PROT: <b>{sumaP.toFixed(1)}</b> / {bloque.meta_proteina}</span>
-           <span>GRASA: <b>{sumaG.toFixed(1)}</b> / {bloque.meta_grasa}</span>
+          <span>PROT: <b>{sumaP.toFixed(1)}</b> / {bloque.meta_proteina}</span>
+          <span>GRASA: <b>{sumaG.toFixed(1)}</b> / {bloque.meta_grasa}</span>
         </div>
         {comidas.length === 0 ? <p className="text-xs text-slate-400 italic">No registró nada.</p> : (
           <ul className="space-y-1">
@@ -149,7 +169,7 @@ export default function GestionPaciente() {
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="max-w-6xl mx-auto">
-        
+
         {/* HEADER */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
@@ -160,19 +180,19 @@ export default function GestionPaciente() {
             </div>
           </div>
           <div className="bg-white p-1 rounded-xl border border-slate-200 flex shadow-sm">
-            <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition ${activeTab === 'plan' ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}><Edit3 className="w-4 h-4"/> Planificación</button>
-            <button onClick={() => setActiveTab('diario')} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition ${activeTab === 'diario' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}><Eye className="w-4 h-4"/> Auditoría</button>
+            <button onClick={() => setActiveTab('plan')} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition ${activeTab === 'plan' ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}><Edit3 className="w-4 h-4" /> Planificación</button>
+            <button onClick={() => setActiveTab('diario')} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition ${activeTab === 'diario' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:bg-slate-50'}`}><Eye className="w-4 h-4" /> Auditoría</button>
           </div>
         </div>
 
         {/* --- TAB PLANIFICACIÓN --- */}
         {activeTab === 'plan' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-in fade-in">
-            
+
             {/* BLOQUES DE DIETA */}
             <div>
               <div className="bg-white p-6 rounded-xl shadow-sm border border-blue-100 mb-6">
-                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-blue-500"/> Crear Bloque</h3>
+                <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Plus className="w-5 h-5 text-blue-500" /> Crear Bloque</h3>
                 <div className="space-y-3">
                   <input value={nuevoBloque} onChange={e => setNuevoBloque(e.target.value)} className="w-full p-2 border rounded" placeholder="Nombre (Ej: Desayuno)" />
                   <div className="grid grid-cols-4 gap-2">
@@ -191,7 +211,7 @@ export default function GestionPaciente() {
                       <h4 className="font-bold">{m.nombre_bloque}</h4>
                       <div className="text-xs text-slate-500 flex gap-2"><span>P: {m.meta_proteina}</span><span>G: {m.meta_grasa}</span><span>C: {m.meta_carbos}</span></div>
                     </div>
-                    <button onClick={() => borrarBloque(m.id)} className="text-red-400"><Trash2 className="w-4 h-4"/></button>
+                    <button onClick={() => borrarBloque(m.id)} className="text-red-400"><Trash2 className="w-4 h-4" /></button>
                   </div>
                 ))}
               </div>
@@ -205,9 +225,9 @@ export default function GestionPaciente() {
               <p className="text-xs text-slate-500 mb-4">El paciente NO PODRÁ ver ni buscar estos alimentos.</p>
 
               <div className="relative mb-4">
-                <input className="w-full p-3 pl-10 border border-slate-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-red-500 outline-none" placeholder="Buscar para bloquear..." value={busquedaGlobal} onChange={e => buscarEnGlobal(e.target.value)}/>
+                <input className="w-full p-3 pl-10 border border-slate-300 rounded-lg bg-slate-50 focus:ring-2 focus:ring-red-500 outline-none" placeholder="Buscar para bloquear..." value={busquedaGlobal} onChange={e => buscarEnGlobal(e.target.value)} />
                 <Search className="absolute left-3 top-3.5 text-slate-400 w-4 h-4" />
-                
+
                 {resultadosGlobales.length > 0 && (
                   <div className="absolute top-full left-0 right-0 bg-white border shadow-lg rounded-lg mt-1 z-10 max-h-40 overflow-auto">
                     {resultadosGlobales.map(alim => (
@@ -247,10 +267,10 @@ export default function GestionPaciente() {
         {activeTab === 'diario' && (
           <div className="animate-in fade-in">
             <div className="bg-white p-4 rounded-xl border border-slate-200 mb-6 flex items-center gap-4">
-              <Calendar className="text-indigo-600 w-6 h-6"/>
+              <Calendar className="text-indigo-600 w-6 h-6" />
               <div>
                 <label className="text-xs font-bold text-slate-400 uppercase block">Fecha a revisar</label>
-                <input type="date" value={fechaAudit} onChange={(e) => setFechaAudit(e.target.value)} className="font-bold text-slate-800 text-lg outline-none bg-transparent"/>
+                <input type="date" value={fechaAudit} onChange={(e) => setFechaAudit(e.target.value)} className="font-bold text-slate-800 text-lg outline-none bg-transparent" />
               </div>
             </div>
             {loadingDiario ? <p>Cargando...</p> : (
