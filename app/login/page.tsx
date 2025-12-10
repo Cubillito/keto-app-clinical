@@ -86,12 +86,11 @@ export default function LoginPage() {
             {/* AQUÍ ESTÁ EL CAMBIO: Tu logo en vez del candado */}
             {/* Asegúrate de que el nombre 'mi-logo.png' sea exacto al de tu archivo */}
             <img 
-              src="/mi-logo.png" 
+              src="/icon.png" 
               alt="Logo de la aplicación" 
               className="w-full h-full object-contain drop-shadow-sm"
             />
 
-          </div>
           <h1 className="text-2xl font-bold text-white">Acceso Privado</h1>
           <p className="text-blue-100 mt-2 text-sm">Plataforma de Gestión Keto</p>
         </div>
