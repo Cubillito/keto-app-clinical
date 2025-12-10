@@ -78,20 +78,13 @@ export default function LoginPage() {
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 p-4 font-sans">
       
       {/* TARJETA PRINCIPAL */}
-      {/* Header Azul */}
+      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-100 z-10">
+        
         <div className="bg-blue-600 p-8 text-center">
-          {/* Círculo semitransparente */}
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-white/20 backdrop-blur-sm mb-4 p-3">
-            
-            {/* AQUÍ ESTÁ EL CAMBIO: Tu logo en vez del candado */}
-            {/* Asegúrate de que el nombre 'mi-logo.png' sea exacto al de tu archivo */}
-            <img 
-              src="/icon.png" 
-              alt="Logo de la aplicación" 
-              className="w-full h-full object-contain drop-shadow-sm"
-            />
-
-          <h1 className="text-2xl font-bold text-white">Acceso Privado</h1>
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm mb-4">
+            <Lock className="w-8 h-8 text-white" />
+          </div>
+          <h1 className="text-2xl font-bold text-white">Bienvenido!</h1>
           <p className="text-blue-100 mt-2 text-sm">Plataforma de Gestión Keto</p>
         </div>
 
