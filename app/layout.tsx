@@ -28,7 +28,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         {children}
-        {/* 2. Aquí colocamos el "Buzón" de notificaciones */}
+        {/* 2. El buzón de notificaciones */}
         <Toaster position="top-center" richColors closeButton />
       </body>
     </html>

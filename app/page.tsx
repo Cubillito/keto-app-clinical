@@ -33,33 +33,36 @@ export default function PatientDashboard() {
     setFecha(nuevaFecha.toLocaleDateString('en-CA'))
   }
 
-  // 2. Extraemos la función de carga para poder reusarla (Refrescar sin recargar la página)
+  // Usamos useCallback para poder recargar los datos sin recargar la página entera
   const cargarDatos = useCallback(async () => {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
     setUsuario(user)
 
-    // Catálogo
+    // 1. Catálogo (Con filtro de prohibidos)
     if (catalogo.length === 0) {
       const { data: todosAlimentos } = await supabase.from('alimentos').select('*')
       const { data: prohibidos } = await supabase.from('alimentos_prohibidos').select('alimento_id').eq('paciente_id', user.id)
       
       const idsProhibidos = new Set(prohibidos?.map(p => p.alimento_id))
       const catalogoFiltrado = todosAlimentos?.filter(a => !idsProhibidos.has(a.id)) || []
+      
       setCatalogo(catalogoFiltrado)
     }
 
-    // Bloques Vigentes
+    // 2. Bloques (Vigentes)
     const { data: allBloques } = await supabase.from('metas_por_comida').select('*').eq('paciente_id', user.id).order('id', { ascending: true })
+    
     const bloquesVigentes = allBloques?.filter(b => {
       const fInicio = b.fecha_inicio
       const fFin = b.fecha_fin
       return fInicio <= fecha && (!fFin || fFin >= fecha)
     }) || []
+
     setBloques(bloquesVigentes)
 
-    // Diario
+    // 3. Diario
     const { data: dataDiario } = await supabase.from('diario_comidas').select('*, alimentos(*)').eq('paciente_id', user.id).eq('fecha', fecha)
     setDiario(dataDiario || [])
     
@@ -77,61 +80,42 @@ export default function PatientDashboard() {
     setResultados(encontrados)
   }
 
+  // --- ALGORITMO COMBO CLÍNICO ---
   const generarComboRecomendado = (bloque: any, actualP: number, actualG: number, actualC: number) => {
     const faltaP = Math.max(0, bloque.meta_proteina - actualP)
     const ratioMeta = bloque.ratio_ideal || 2.0 
-
-    // Si falta muy poco, no sugerir nada
-    if (faltaP < 2 && (bloque.meta_grasa - actualG) < 3) return null
+    if (faltaP < 2 && (bloque.meta_grasa - actualG) < 5) return null
 
     let recomendacion: any[] = []
-
-    // PASO 1: BASE PROTEICA (Si falta proteína)
     if (faltaP > 3) {
       const opcionesProt = catalogo.filter(a => a.proteina > 10 && a.carbos < 2)
       if (opcionesProt.length > 0) {
-        const alimentoBase = opcionesProt[Math.floor(Math.random() * opcionesProt.length)]
-        const gramosBase = (faltaP / alimentoBase.proteina) * 100
-        recomendacion.push({ alimento: alimentoBase, gramos: Math.round(gramosBase), razon: 'Base Proteica' })
+        const base = opcionesProt[Math.floor(Math.random() * opcionesProt.length)]
+        const gramosBase = (faltaP / base.proteina) * 100
+        recomendacion.push({ alimento: base, gramos: Math.round(gramosBase), razon: 'Base Proteica' })
       }
     }
+    
+    let pProyectada = actualP + (recomendacion[0] ? (recomendacion[0].alimento.proteina * recomendacion[0].gramos)/100 : 0)
+    let gProy = actualG + (recomendacion[0] ? (recomendacion[0].alimento.grasa * recomendacion[0].gramos)/100 : 0)
+    let cProy = actualC + (recomendacion[0] ? (recomendacion[0].alimento.carbos * recomendacion[0].gramos)/100 : 0)
+    
+    const grasaNecesariaTotal = ratioMeta * (pProyectada + cProy)
+    const grasaFaltanteParaRatio = Math.max(0, grasaNecesariaTotal - gProy)
 
-    // PASO 2: AJUSTE DE GRASA (Para cumplir Ratio X:1)
-    // Calculamos los macros proyectados (Lo que llevas + lo que acabamos de sugerir de proteína)
-    let pProyectada = actualP
-    let gProyectada = actualG
-    let cProyectada = actualC
-
-    if (recomendacion.length > 0) {
-      const base = recomendacion[0]
-      pProyectada += (base.alimento.proteina * base.gramos) / 100
-      gProyectada += (base.alimento.grasa * base.gramos) / 100
-      cProyectada += (base.alimento.carbos * base.gramos) / 100
-    }
-
-    // FÓRMULA MAESTRA: Grasa = Ratio * (Proteína + Carbos)
-    // CORRECCIÓN: Ahora usamos las variables 'pProyectada' y 'cProyectada' que definimos arriba
-    const grasaObjetivo = ratioMeta * (pProyectada + cProyectada)
-    const grasaFaltante = Math.max(0, grasaObjetivo - gProyectada)
-
-    if (grasaFaltante > 3) {
-      // Buscamos grasa pura (Aceites, Cremas, Manteca)
+    if (grasaFaltanteParaRatio > 3) {
       const opcionesGrasa = catalogo.filter(a => a.grasa > 20 && a.proteina < 5 && a.carbos < 5)
-      
       if (opcionesGrasa.length > 0) {
-        // Preferencia por aceites MCT/Oliva si existen
         const grasaPreferida = opcionesGrasa.find(a => a.nombre.toUpperCase().includes('MCT') || a.nombre.toUpperCase().includes('OLIVA')) || opcionesGrasa[Math.floor(Math.random() * opcionesGrasa.length)]
-        
-        const gramosGrasa = (grasaFaltante / grasaPreferida.grasa) * 100
+        const gramosGrasa = (grasaFaltanteParaRatio / grasaPreferida.grasa) * 100
         recomendacion.push({ alimento: grasaPreferida, gramos: Math.round(gramosGrasa), razon: 'Ajuste de Ratio' })
       }
     }
-
-    if (recomendacion.length === 0) return null
-    return recomendacion
+    return recomendacion.length > 0 ? recomendacion : null
   }
 
-  // --- 3. ACCIONES CON TOAST ---
+  // --- ACCIONES MEJORADAS CON TOAST ---
+
   const agregarCombo = async (items: any[], bloque: any) => {
     if (!bloque) return
     const inserts = items.map(item => ({
@@ -145,10 +129,10 @@ export default function PatientDashboard() {
     const { error } = await supabase.from('diario_comidas').insert(inserts)
     
     if (error) {
-      toast.error("Error al guardar: " + error.message) // 🔴 Mensaje de Error
+      toast.error("Error al guardar: " + error.message)
     } else {
-      toast.success("¡Combo agregado correctamente!") // 🟢 Mensaje de Éxito
-      cargarDatos() // Refrescamos datos sin recargar página
+      toast.success("¡Combo agregado correctamente!")
+      cargarDatos()
     }
   }
 
@@ -167,26 +151,38 @@ export default function PatientDashboard() {
     if (error) {
       toast.error("Hubo un problema: " + error.message)
     } else {
-      toast.success(`${alimentoSeleccionado.nombre} agregado (${g}g)`) // 🟢 Mensaje personalizado
-      setAlimentoSeleccionado(null) // Cerramos modal
+      toast.success(`${alimentoSeleccionado.nombre} agregado (${g}g)`)
+      setAlimentoSeleccionado(null)
       setBloqueSeleccionado(null)
       setBusqueda('')
       setResultados([])
-      cargarDatos() // Refrescamos
+      cargarDatos()
     }
   }
 
-  const borrarComida = async (idDiario: string) => {
-    // Para borrar seguimos usando confirm porque es una acción destructiva
-    // Pero podríamos cambiarlo a un toast con "Deshacer" en el futuro
-    if(!confirm("¿Borrar esta comida?")) return
-    
-    const { error } = await supabase.from('diario_comidas').delete().eq('id', idDiario)
-    if (error) toast.error("Error al borrar")
-    else {
-      toast.info("Comida eliminada") // 🔵 Mensaje informativo
-      cargarDatos()
-    }
+  // ⭐ NUEVO SISTEMA DE ELIMINACIÓN BONITO ⭐
+  const borrarComida = (idDiario: string) => {
+    // Usamos el toast especial de confirmación
+    toast("¿Estás seguro de eliminar esta comida?", {
+      description: "Esta acción no se puede deshacer",
+      action: {
+        label: "Eliminar",
+        onClick: async () => {
+            const { error } = await supabase.from('diario_comidas').delete().eq('id', idDiario)
+            if (error) {
+                toast.error("Error al borrar")
+            } else {
+                toast.success("Comida eliminada")
+                cargarDatos()
+            }
+        },
+      },
+      cancel: {
+        label: "Cancelar",
+        onClick: () => {} // Solo cierra el toast
+      },
+      duration: 5000, // Se queda 5 segundos esperando
+    })
   }
 
   const renderBloque = (bloque: any) => {
@@ -247,6 +243,7 @@ export default function PatientDashboard() {
                    <span className="font-bold text-slate-700 block">{item.alimentos.nombre}</span>
                    <span className="text-slate-400 text-xs">{item.gramos_consumidos}g</span>
                  </div>
+                 {/* BOTÓN DE BORRAR QUE DISPARA EL TOAST */}
                  <button onClick={() => borrarComida(item.id)} className="text-red-300 hover:text-red-500 hover:bg-red-50 p-2 rounded transition-all"><Trash2 className="w-4 h-4"/></button>
               </div>
             ))
@@ -305,7 +302,7 @@ export default function PatientDashboard() {
         </div>
       </header>
 
-      <main className="p-4 max-w-lg mx-auto animate-in fade-in">
+      <main className="p-4 max-w-lg mx-auto">
         {bloques.length === 0 ? <div className="text-center py-12 text-slate-400">Sin plan nutricional para esta fecha</div> : bloques.map(renderBloque)}
       </main>
 
