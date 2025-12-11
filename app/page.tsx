@@ -1,16 +1,18 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search, Trash2, PlusCircle, LogOut, CheckCircle, AlertCircle, Sparkles, ArrowRight, TrendingUp, Activity, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Plus } from 'lucide-react'
 import { supabase } from './lib/supabaseClient'
+// 1. Importamos la función toast
+import { toast } from 'sonner'
 
 export default function PatientDashboard() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
   const [usuario, setUsuario] = useState<any>(null)
   
-  // --- FECHA SELECCIONADA ---
+  // --- FECHA ---
   const [fecha, setFecha] = useState(new Date().toLocaleDateString('en-CA')) 
   
   // Datos
@@ -31,52 +33,42 @@ export default function PatientDashboard() {
     setFecha(nuevaFecha.toLocaleDateString('en-CA'))
   }
 
-  useEffect(() => {
-    const cargar = async () => {
-      setLoading(true)
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
-      setUsuario(user)
+  // 2. Extraemos la función de carga para poder reusarla (Refrescar sin recargar la página)
+  const cargarDatos = useCallback(async () => {
+    setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { router.push('/login'); return }
+    setUsuario(user)
 
-      // 1. CATÁLOGO (Filtrado por prohibidos)
-      if (catalogo.length === 0) {
-        const { data: todosAlimentos } = await supabase.from('alimentos').select('*')
-        const { data: prohibidos } = await supabase.from('alimentos_prohibidos').select('alimento_id').eq('paciente_id', user.id)
-        
-        const idsProhibidos = new Set(prohibidos?.map(p => p.alimento_id))
-        const catalogoFiltrado = todosAlimentos?.filter(a => !idsProhibidos.has(a.id)) || []
-        setCatalogo(catalogoFiltrado)
-      }
-
-      // 2. BLOQUES (CON LÓGICA DE HISTORIAL) ⏳
-      const { data: allBloques } = await supabase
-        .from('metas_por_comida')
-        .select('*')
-        .eq('paciente_id', user.id)
-        .order('id', { ascending: true })
+    // Catálogo
+    if (catalogo.length === 0) {
+      const { data: todosAlimentos } = await supabase.from('alimentos').select('*')
+      const { data: prohibidos } = await supabase.from('alimentos_prohibidos').select('alimento_id').eq('paciente_id', user.id)
       
-      // FILTRO DE VIGENCIA:
-      // El bloque es visible SI: (Inició antes o hoy) Y (No ha terminado O termina en el futuro)
-      const bloquesVigentes = allBloques?.filter(b => {
-        const fInicio = b.fecha_inicio
-        const fFin = b.fecha_fin
-        return fInicio <= fecha && (!fFin || fFin >= fecha)
-      }) || []
-
-      setBloques(bloquesVigentes)
-
-      // 3. DIARIO
-      const { data: dataDiario } = await supabase
-        .from('diario_comidas')
-        .select('*, alimentos(*)')
-        .eq('paciente_id', user.id)
-        .eq('fecha', fecha)
-      
-      setDiario(dataDiario || [])
-      setLoading(false)
+      const idsProhibidos = new Set(prohibidos?.map(p => p.alimento_id))
+      const catalogoFiltrado = todosAlimentos?.filter(a => !idsProhibidos.has(a.id)) || []
+      setCatalogo(catalogoFiltrado)
     }
-    cargar()
-  }, [fecha])
+
+    // Bloques Vigentes
+    const { data: allBloques } = await supabase.from('metas_por_comida').select('*').eq('paciente_id', user.id).order('id', { ascending: true })
+    const bloquesVigentes = allBloques?.filter(b => {
+      const fInicio = b.fecha_inicio
+      const fFin = b.fecha_fin
+      return fInicio <= fecha && (!fFin || fFin >= fecha)
+    }) || []
+    setBloques(bloquesVigentes)
+
+    // Diario
+    const { data: dataDiario } = await supabase.from('diario_comidas').select('*, alimentos(*)').eq('paciente_id', user.id).eq('fecha', fecha)
+    setDiario(dataDiario || [])
+    
+    setLoading(false)
+  }, [fecha, catalogo.length, router])
+
+  useEffect(() => {
+    cargarDatos()
+  }, [cargarDatos])
 
   const buscarAlimento = async (txt: string) => {
     setBusqueda(txt)
@@ -85,60 +77,39 @@ export default function PatientDashboard() {
     setResultados(encontrados)
   }
 
-  // --- ALGORITMO COMBO CLÍNICO REFINADO (X:1) 🧠 ---
   const generarComboRecomendado = (bloque: any, actualP: number, actualG: number, actualC: number) => {
     const faltaP = Math.max(0, bloque.meta_proteina - actualP)
     const ratioMeta = bloque.ratio_ideal || 2.0 
-
-    // Si falta muy poco, no sugerir nada
-    if (faltaP < 2 && (bloque.meta_grasa - actualG) < 3) return null
+    if (faltaP < 2 && (bloque.meta_grasa - actualG) < 5) return null
 
     let recomendacion: any[] = []
-
-    // PASO 1: BASE PROTEICA (Si falta proteína)
     if (faltaP > 3) {
       const opcionesProt = catalogo.filter(a => a.proteina > 10 && a.carbos < 2)
       if (opcionesProt.length > 0) {
-        const alimentoBase = opcionesProt[Math.floor(Math.random() * opcionesProt.length)]
-        const gramosBase = (faltaP / alimentoBase.proteina) * 100
-        recomendacion.push({ alimento: alimentoBase, gramos: Math.round(gramosBase), razon: 'Base Proteica' })
+        const base = opcionesProt[Math.floor(Math.random() * opcionesProt.length)]
+        const gramosBase = (faltaP / base.proteina) * 100
+        recomendacion.push({ alimento: base, gramos: Math.round(gramosBase), razon: 'Base Proteica' })
       }
     }
+    let pProyectada = actualP + (recomendacion[0] ? (recomendacion[0].alimento.proteina * recomendacion[0].gramos)/100 : 0)
+    let gProy = actualG + (recomendacion[0] ? (recomendacion[0].alimento.grasa * recomendacion[0].gramos)/100 : 0)
+    let cProy = actualC + (recomendacion[0] ? (recomendacion[0].alimento.carbos * recomendacion[0].gramos)/100 : 0)
+    
+    const grasaNecesariaTotal = ratioMeta * (pProyectada + cProyectada)
+    const grasaFaltanteParaRatio = Math.max(0, grasaNecesariaTotal - gProy)
 
-    // PASO 2: AJUSTE DE GRASA (Para cumplir Ratio X:1)
-    // Calculamos los macros proyectados (Lo que llevas + lo que acabamos de sugerir de proteína)
-    let pProyectada = actualP
-    let gProyectada = actualG
-    let cProyectada = actualC
-
-    if (recomendacion.length > 0) {
-      const base = recomendacion[0]
-      pProyectada += (base.alimento.proteina * base.gramos) / 100
-      gProyectada += (base.alimento.grasa * base.gramos) / 100
-      cProyectada += (base.alimento.carbos * base.gramos) / 100
-    }
-
-    // FÓRMULA MAESTRA: Grasa = Ratio * (Proteína + Carbos)
-    const grasaObjetivo = ratioMeta * (pProyectada + cProyectada)
-    const grasaFaltante = Math.max(0, grasaObjetivo - gProyectada)
-
-    if (grasaFaltante > 3) {
-      // Buscamos grasa pura (Aceites, Cremas, Manteca)
+    if (grasaFaltanteParaRatio > 3) {
       const opcionesGrasa = catalogo.filter(a => a.grasa > 20 && a.proteina < 5 && a.carbos < 5)
-      
       if (opcionesGrasa.length > 0) {
-        // Preferencia por aceites MCT/Oliva si existen
         const grasaPreferida = opcionesGrasa.find(a => a.nombre.toUpperCase().includes('MCT') || a.nombre.toUpperCase().includes('OLIVA')) || opcionesGrasa[Math.floor(Math.random() * opcionesGrasa.length)]
-        
-        const gramosGrasa = (grasaFaltante / grasaPreferida.grasa) * 100
+        const gramosGrasa = (grasaFaltanteParaRatio / grasaPreferida.grasa) * 100
         recomendacion.push({ alimento: grasaPreferida, gramos: Math.round(gramosGrasa), razon: 'Ajuste de Ratio' })
       }
     }
-
-    if (recomendacion.length === 0) return null
-    return recomendacion
+    return recomendacion.length > 0 ? recomendacion : null
   }
 
+  // --- 3. ACCIONES CON TOAST ---
   const agregarCombo = async (items: any[], bloque: any) => {
     if (!bloque) return
     const inserts = items.map(item => ({
@@ -150,8 +121,13 @@ export default function PatientDashboard() {
       fecha: fecha 
     }))
     const { error } = await supabase.from('diario_comidas').insert(inserts)
-    if (error) alert("Error: " + error.message)
-    else window.location.reload()
+    
+    if (error) {
+      toast.error("Error al guardar: " + error.message) // 🔴 Mensaje de Error
+    } else {
+      toast.success("¡Combo agregado correctamente!") // 🟢 Mensaje de Éxito
+      cargarDatos() // Refrescamos datos sin recargar página
+    }
   }
 
   const agregarManual = async () => {
@@ -165,19 +141,34 @@ export default function PatientDashboard() {
       nombre_comida_asignada: bloqueSeleccionado.nombre_bloque,
       fecha: fecha
     })
-    if (error) alert(error.message)
-    else window.location.reload()
+
+    if (error) {
+      toast.error("Hubo un problema: " + error.message)
+    } else {
+      toast.success(`${alimentoSeleccionado.nombre} agregado (${g}g)`) // 🟢 Mensaje personalizado
+      setAlimentoSeleccionado(null) // Cerramos modal
+      setBloqueSeleccionado(null)
+      setBusqueda('')
+      setResultados([])
+      cargarDatos() // Refrescamos
+    }
   }
 
   const borrarComida = async (idDiario: string) => {
-    if(!confirm("¿Borrar?")) return
-    await supabase.from('diario_comidas').delete().eq('id', idDiario)
-    window.location.reload()
+    // Para borrar seguimos usando confirm porque es una acción destructiva
+    // Pero podríamos cambiarlo a un toast con "Deshacer" en el futuro
+    if(!confirm("¿Borrar esta comida?")) return
+    
+    const { error } = await supabase.from('diario_comidas').delete().eq('id', idDiario)
+    if (error) toast.error("Error al borrar")
+    else {
+      toast.info("Comida eliminada") // 🔵 Mensaje informativo
+      cargarDatos()
+    }
   }
 
   const renderBloque = (bloque: any) => {
     const comidasEsteBloque = diario.filter(d => d.bloque_id === bloque.id)
-    
     const sumaP = comidasEsteBloque.reduce((acc, el) => acc + ((el.alimentos.proteina * el.gramos_consumidos)/100), 0)
     const sumaG = comidasEsteBloque.reduce((acc, el) => acc + ((el.alimentos.grasa * el.gramos_consumidos)/100), 0)
     const sumaC = comidasEsteBloque.reduce((acc, el) => acc + ((el.alimentos.carbos * el.gramos_consumidos)/100), 0)
@@ -185,22 +176,20 @@ export default function PatientDashboard() {
     const calMeta = Math.round((bloque.meta_proteina * 4) + (bloque.meta_carbos * 4) + (bloque.meta_grasa * 9))
     const calActual = Math.round((sumaP * 4) + (sumaC * 4) + (sumaG * 9))
     
-    // Ratio
     const denominador = sumaP + sumaC
     const ratioActual = denominador > 0 ? (sumaG / denominador).toFixed(1) : '0.0'
     const ratioMeta = bloque.ratio_ideal || 2.0
     
     const cumplido = Math.abs(sumaP - bloque.meta_proteina) < 2 && Math.abs(parseFloat(ratioActual) - ratioMeta) < 0.2
-
     const combo = generarComboRecomendado(bloque, sumaP, sumaG, sumaC)
 
     return (
-      <div key={bloque.id} className={`bg-white rounded-xl border-2 mb-8 overflow-hidden shadow-sm ${cumplido ? 'border-green-400' : 'border-slate-100'}`}>
+      <div key={bloque.id} className={`bg-white rounded-xl border-2 mb-8 overflow-hidden shadow-sm transition-all duration-300 ${cumplido ? 'border-green-400 ring-2 ring-green-100' : 'border-slate-100'}`}>
         <div className="bg-slate-50 p-4 border-b border-slate-100">
           <div className="flex justify-between items-start mb-2">
              <h3 className="font-bold text-xl text-slate-800">{bloque.nombre_bloque}</h3>
              {cumplido ? (
-               <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold shadow-sm"><CheckCircle className="w-3 h-3"/> LISTO</span>
+               <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-bold shadow-sm animate-in zoom-in"><CheckCircle className="w-3 h-3"/> LISTO</span>
              ) : (
                <span className="inline-flex items-center gap-1 bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs font-bold shadow-sm"><AlertCircle className="w-3 h-3"/> AJUSTAR</span>
              )}
@@ -231,12 +220,12 @@ export default function PatientDashboard() {
         <div className="p-4 space-y-3 relative">
           {comidasEsteBloque.length > 0 ? (
             comidasEsteBloque.map((item: any) => (
-              <div key={item.id} className="flex justify-between items-center text-sm bg-slate-50 p-3 rounded-lg border border-slate-100">
+              <div key={item.id} className="flex justify-between items-center text-sm bg-slate-50 p-3 rounded-lg border border-slate-100 hover:bg-white transition-colors">
                  <div>
                    <span className="font-bold text-slate-700 block">{item.alimentos.nombre}</span>
                    <span className="text-slate-400 text-xs">{item.gramos_consumidos}g</span>
                  </div>
-                 <button onClick={() => borrarComida(item.id)} className="text-red-300 hover:text-red-500 hover:bg-red-50 p-2 rounded"><Trash2 className="w-4 h-4"/></button>
+                 <button onClick={() => borrarComida(item.id)} className="text-red-300 hover:text-red-500 hover:bg-red-50 p-2 rounded transition-all"><Trash2 className="w-4 h-4"/></button>
               </div>
             ))
           ) : (
@@ -244,7 +233,7 @@ export default function PatientDashboard() {
           )}
 
           {!cumplido && combo && combo.length > 0 && (
-            <div className="mt-4 bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl p-4 shadow-sm">
+            <div className="mt-4 bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 rounded-xl p-4 shadow-sm animate-in slide-in-from-bottom-2 fade-in">
               <div className="flex items-start gap-3">
                 <div className="bg-white p-2 rounded-full text-indigo-600 mt-1 shadow-sm"><Sparkles className="w-5 h-5" /></div>
                 <div className="flex-1">
@@ -257,15 +246,15 @@ export default function PatientDashboard() {
                       </div>
                     ))}
                   </div>
-                  <button onClick={() => agregarCombo(combo, bloque)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-3 rounded-lg flex items-center justify-center gap-2 shadow-md">
-                    Agregar Combo <ArrowRight className="w-3 h-3" />
+                  <button onClick={() => agregarCombo(combo, bloque)} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-3 rounded-lg flex items-center justify-center gap-2 shadow-md transition-all active:scale-95">
+                    Agregar Todo <ArrowRight className="w-3 h-3" />
                   </button>
                 </div>
               </div>
             </div>
           )}
 
-          <button onClick={() => { setBloqueSeleccionado(bloque); setBusqueda(''); setResultados([]); }} className="w-full py-3 mt-2 border border-dashed border-slate-300 text-slate-400 rounded-xl hover:bg-slate-50 hover:border-slate-400 hover:text-slate-600 flex justify-center items-center gap-2 text-sm font-medium">
+          <button onClick={() => { setBloqueSeleccionado(bloque); setBusqueda(''); setResultados([]); }} className="w-full py-3 mt-2 border border-dashed border-slate-300 text-slate-400 rounded-xl hover:bg-slate-50 hover:border-slate-400 hover:text-slate-600 flex justify-center items-center gap-2 text-sm font-medium transition-all">
             <PlusCircle className="w-4 h-4" /> Buscar manualmente
           </button>
         </div>
@@ -294,23 +283,26 @@ export default function PatientDashboard() {
         </div>
       </header>
 
-      <main className="p-4 max-w-lg mx-auto">
+      <main className="p-4 max-w-lg mx-auto animate-in fade-in">
         {bloques.length === 0 ? <div className="text-center py-12 text-slate-400">Sin plan nutricional para esta fecha</div> : bloques.map(renderBloque)}
       </main>
 
-      {/* MODALES */}
+      {/* MODAL BÚSQUEDA */}
       {bloqueSeleccionado && !alimentoSeleccionado && (
-        <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm">
-          <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl h-[80vh] sm:h-auto flex flex-col">
+        <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden shadow-2xl h-[80vh] sm:h-auto flex flex-col animate-in slide-in-from-bottom-10">
             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="font-bold text-slate-700">Agregar a {bloqueSeleccionado.nombre_bloque}</h3>
               <button onClick={() => setBloqueSeleccionado(null)} className="bg-slate-200 text-slate-500 rounded-full w-8 h-8 flex items-center justify-center font-bold">×</button>
             </div>
             <div className="p-4 flex-1 overflow-y-auto">
-              <input autoFocus placeholder="Buscar..." className="w-full p-4 mb-4 border border-slate-200 rounded-xl bg-slate-50 outline-none text-lg" value={busqueda} onChange={e => buscarAlimento(e.target.value)} />
+              <div className="relative mb-4">
+                <input autoFocus placeholder="Buscar..." className="w-full p-4 pl-10 border border-slate-200 rounded-xl bg-slate-50 outline-none text-lg focus:ring-2 focus:ring-blue-500" value={busqueda} onChange={e => buscarAlimento(e.target.value)} />
+                <Search className="absolute left-3 top-5 text-slate-400 w-5 h-5"/>
+              </div>
               <div className="space-y-2">
                 {resultados.map(r => (
-                  <div key={r.id} onClick={() => setAlimentoSeleccionado(r)} className="p-4 border border-slate-100 rounded-xl hover:bg-blue-50 cursor-pointer flex justify-between items-center">
+                  <div key={r.id} onClick={() => setAlimentoSeleccionado(r)} className="p-4 border border-slate-100 rounded-xl hover:bg-blue-50 cursor-pointer flex justify-between items-center transition-colors">
                     <span className="font-bold text-slate-700">{r.nombre}</span>
                     <PlusCircle className="text-blue-500 w-6 h-6"/>
                   </div>
@@ -321,16 +313,17 @@ export default function PatientDashboard() {
         </div>
       )}
 
+      {/* MODAL CANTIDAD */}
       {alimentoSeleccionado && (
-        <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-           <div className="bg-white w-full max-w-sm rounded-2xl p-6 shadow-2xl">
+        <div className="fixed inset-0 bg-slate-900/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+           <div className="bg-white w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95">
               <h4 className="text-lg font-bold text-center text-slate-800 mb-6">¿Cuánto {alimentoSeleccionado.nombre}?</h4>
               <div className="flex items-center justify-center gap-3 mb-8">
                 <input type="number" value={gramos} onChange={e => setGramos(e.target.value)} className="text-4xl font-black text-center w-32 border-b-4 border-blue-500 outline-none py-2 text-slate-800" autoFocus />
                 <span className="text-slate-400 font-bold text-xl mt-2">gramos</span>
               </div>
-              <button onClick={agregarManual} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800 shadow-lg">Confirmar</button>
-              <button onClick={() => setAlimentoSeleccionado(null)} className="w-full mt-3 py-3 text-slate-400 font-bold text-sm">Cancelar</button>
+              <button onClick={agregarManual} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-slate-800 shadow-lg transition-transform active:scale-95">Confirmar</button>
+              <button onClick={() => setAlimentoSeleccionado(null)} className="w-full mt-3 py-3 text-slate-400 font-bold text-sm hover:text-slate-600">Cancelar</button>
            </div>
         </div>
       )}
