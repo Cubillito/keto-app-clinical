@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
-import { NextResponse } from 'next/server'
+// 1. Importamos NextRequest
+import { NextResponse, NextRequest } from 'next/server'
 
-export async function POST(request: Request) {
+// 2. Usamos NextRequest en lugar de Request
+export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { email, password, nombre, rol, creadorId } = body

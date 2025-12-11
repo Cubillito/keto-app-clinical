@@ -80,33 +80,55 @@ export default function PatientDashboard() {
   const generarComboRecomendado = (bloque: any, actualP: number, actualG: number, actualC: number) => {
     const faltaP = Math.max(0, bloque.meta_proteina - actualP)
     const ratioMeta = bloque.ratio_ideal || 2.0 
-    if (faltaP < 2 && (bloque.meta_grasa - actualG) < 5) return null
+
+    // Si falta muy poco, no sugerir nada
+    if (faltaP < 2 && (bloque.meta_grasa - actualG) < 3) return null
 
     let recomendacion: any[] = []
+
+    // PASO 1: BASE PROTEICA (Si falta proteína)
     if (faltaP > 3) {
       const opcionesProt = catalogo.filter(a => a.proteina > 10 && a.carbos < 2)
       if (opcionesProt.length > 0) {
-        const base = opcionesProt[Math.floor(Math.random() * opcionesProt.length)]
-        const gramosBase = (faltaP / base.proteina) * 100
-        recomendacion.push({ alimento: base, gramos: Math.round(gramosBase), razon: 'Base Proteica' })
+        const alimentoBase = opcionesProt[Math.floor(Math.random() * opcionesProt.length)]
+        const gramosBase = (faltaP / alimentoBase.proteina) * 100
+        recomendacion.push({ alimento: alimentoBase, gramos: Math.round(gramosBase), razon: 'Base Proteica' })
       }
     }
-    let pProyectada = actualP + (recomendacion[0] ? (recomendacion[0].alimento.proteina * recomendacion[0].gramos)/100 : 0)
-    let gProy = actualG + (recomendacion[0] ? (recomendacion[0].alimento.grasa * recomendacion[0].gramos)/100 : 0)
-    let cProy = actualC + (recomendacion[0] ? (recomendacion[0].alimento.carbos * recomendacion[0].gramos)/100 : 0)
-    
-    const grasaNecesariaTotal = ratioMeta * (pProyectada + cProyectada)
-    const grasaFaltanteParaRatio = Math.max(0, grasaNecesariaTotal - gProy)
 
-    if (grasaFaltanteParaRatio > 3) {
+    // PASO 2: AJUSTE DE GRASA (Para cumplir Ratio X:1)
+    // Calculamos los macros proyectados (Lo que llevas + lo que acabamos de sugerir de proteína)
+    let pProyectada = actualP
+    let gProyectada = actualG
+    let cProyectada = actualC
+
+    if (recomendacion.length > 0) {
+      const base = recomendacion[0]
+      pProyectada += (base.alimento.proteina * base.gramos) / 100
+      gProyectada += (base.alimento.grasa * base.gramos) / 100
+      cProyectada += (base.alimento.carbos * base.gramos) / 100
+    }
+
+    // FÓRMULA MAESTRA: Grasa = Ratio * (Proteína + Carbos)
+    // CORRECCIÓN: Ahora usamos las variables 'pProyectada' y 'cProyectada' que definimos arriba
+    const grasaObjetivo = ratioMeta * (pProyectada + cProyectada)
+    const grasaFaltante = Math.max(0, grasaObjetivo - gProyectada)
+
+    if (grasaFaltante > 3) {
+      // Buscamos grasa pura (Aceites, Cremas, Manteca)
       const opcionesGrasa = catalogo.filter(a => a.grasa > 20 && a.proteina < 5 && a.carbos < 5)
+      
       if (opcionesGrasa.length > 0) {
+        // Preferencia por aceites MCT/Oliva si existen
         const grasaPreferida = opcionesGrasa.find(a => a.nombre.toUpperCase().includes('MCT') || a.nombre.toUpperCase().includes('OLIVA')) || opcionesGrasa[Math.floor(Math.random() * opcionesGrasa.length)]
-        const gramosGrasa = (grasaFaltanteParaRatio / grasaPreferida.grasa) * 100
+        
+        const gramosGrasa = (grasaFaltante / grasaPreferida.grasa) * 100
         recomendacion.push({ alimento: grasaPreferida, gramos: Math.round(gramosGrasa), razon: 'Ajuste de Ratio' })
       }
     }
-    return recomendacion.length > 0 ? recomendacion : null
+
+    if (recomendacion.length === 0) return null
+    return recomendacion
   }
 
   // --- 3. ACCIONES CON TOAST ---
